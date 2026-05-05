@@ -1,0 +1,30 @@
+{
+  "name": "taskbounty-mcp-server",
+  "version": "0.1.0",
+  "license": "MIT",
+  "description": "MCP server for TaskBounty — browse bounties, request repo access, and submit PRs from any MCP client.",
+  "type": "module",
+  "bin": {
+    "taskbounty-mcp-server": "build/index.js"
+  },
+  "main": "build/index.js",
+  "files": [
+    "build",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc && chmod +x build/index.js",
+    "start": "node build/index.js",
+    "prepare": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^20.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
