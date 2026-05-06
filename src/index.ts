@@ -167,6 +167,104 @@ const TOOLS = [
       required: ["submission_id"],
     },
   },
+  {
+    name: "create_bounty_draft",
+    description:
+      "Create a new bounty as an unfunded DRAFT. Returns task_id and slug. Bounty is created as DRAFT/UNFUNDED. Call fund_bounty next to get a Stripe Checkout URL the user can open to fund. Requires TASKBOUNTY_API_KEY.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Bounty title (5-200 chars)." },
+        short_summary: { type: "string", description: "One-line summary (10-500 chars)." },
+        description: { type: "string", description: "Full bounty description (20-10000 chars)." },
+        category: { type: "string", description: "Category, e.g. 'code', 'research', 'design'." },
+        bounty_amount: { type: "number", description: "Bounty amount in USD." },
+        submission_deadline: {
+          type: "string",
+          description: "ISO 8601 deadline. Must be at least 7 days from now.",
+        },
+        evaluation_criteria: { type: "string", description: "Optional evaluation criteria." },
+        expected_output_format: { type: "string", description: "Optional expected output format." },
+        github_repo_url: { type: "string", description: "Optional GitHub repo URL for code tasks." },
+        tags: { type: "string", description: "Optional comma-separated tags." },
+        platform: { type: "string", description: "Optional platform: 'general' or 'code'." },
+        language: { type: "string", description: "Optional language filter (e.g. 'typescript')." },
+      },
+      required: [
+        "title",
+        "short_summary",
+        "description",
+        "category",
+        "bounty_amount",
+        "submission_deadline",
+      ],
+    },
+  },
+  {
+    name: "fund_bounty",
+    description:
+      "Create a Stripe Checkout session for funding a draft bounty. Returns a Stripe Checkout URL the user must open in a browser to complete payment. This tool does NOT charge the user automatically - payment requires the user to visit the URL and confirm. Requires TASKBOUNTY_API_KEY.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: { type: "string", description: "The draft task id to fund." },
+      },
+      required: ["task_id"],
+    },
+  },
+  {
+    name: "list_my_bounties",
+    description:
+      "List bounties posted by the authenticated user. Filter by status. Requires TASKBOUNTY_API_KEY.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          description: "Optional comma-separated statuses, e.g. 'DRAFT,OPEN,AWARDED'.",
+        },
+        limit: { type: "number", description: "Max items to return (default 25)." },
+        offset: { type: "number", description: "Offset for pagination (default 0)." },
+      },
+    },
+  },
+  {
+    name: "get_bounty_submissions",
+    description:
+      "List submissions for a bounty you posted. Returns submissions with verification_status, external_link, agent_name, and other metadata. Requires TASKBOUNTY_API_KEY.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: { type: "string", description: "The task id." },
+      },
+      required: ["task_id"],
+    },
+  },
+  {
+    name: "award_bounty",
+    description:
+      "Selects a winning submission for the bounty. The award is staged as pending_review and finalized after admin approval (typically same-day). Requires TASKBOUNTY_API_KEY.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: { type: "string", description: "The task id." },
+        submission_id: { type: "string", description: "The winning submission id." },
+      },
+      required: ["task_id", "submission_id"],
+    },
+  },
+  {
+    name: "cancel_bounty",
+    description:
+      "Cancels an unfunded draft. Cannot cancel funded/open bounties via this tool - those require a manual refund through the dashboard. Requires TASKBOUNTY_API_KEY.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: { type: "string", description: "The draft task id to cancel." },
+      },
+      required: ["task_id"],
+    },
+  },
 ] as const;
 
 const server = new Server(
@@ -244,6 +342,113 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         };
       }
       return await tbFetch(`/submissions/${encodeURIComponent(id)}`, {
+        requireAuth: true,
+      });
+    }
+
+    case "create_bounty_draft": {
+      const required = ["title", "short_summary", "description", "category", "bounty_amount", "submission_deadline"];
+      for (const key of required) {
+        if (a[key] === undefined || a[key] === null || a[key] === "") {
+          return {
+            content: [{ type: "text", text: `${key} is required` }],
+            isError: true,
+          };
+        }
+      }
+      const body: Record<string, unknown> = {
+        title: a.title,
+        short_summary: a.short_summary,
+        description: a.description,
+        category: a.category,
+        bounty_amount: a.bounty_amount,
+        submission_deadline: a.submission_deadline,
+      };
+      if (typeof a.evaluation_criteria === "string") body.evaluation_criteria = a.evaluation_criteria;
+      if (typeof a.expected_output_format === "string") body.expected_output_format = a.expected_output_format;
+      if (typeof a.github_repo_url === "string") body.github_repo_url = a.github_repo_url;
+      if (typeof a.tags === "string") body.tags = a.tags;
+      if (typeof a.platform === "string") body.platform = a.platform;
+      if (typeof a.language === "string") body.language = a.language;
+      return await tbFetch(`/tasks`, {
+        method: "POST",
+        body: JSON.stringify(body),
+        requireAuth: true,
+      });
+    }
+
+    case "fund_bounty": {
+      const taskId = String(a.task_id ?? "");
+      if (!taskId) {
+        return {
+          content: [{ type: "text", text: "task_id is required" }],
+          isError: true,
+        };
+      }
+      return await tbFetch(`/tasks/${encodeURIComponent(taskId)}/checkout`, {
+        method: "POST",
+        body: JSON.stringify({}),
+        requireAuth: true,
+      });
+    }
+
+    case "list_my_bounties": {
+      const params = new URLSearchParams();
+      if (typeof a.status === "string") params.set("status", a.status);
+      if (typeof a.limit === "number") params.set("limit", String(a.limit));
+      if (typeof a.offset === "number") params.set("offset", String(a.offset));
+      const qs = params.toString();
+      return await tbFetch(`/tasks/mine${qs ? `?${qs}` : ""}`, {
+        requireAuth: true,
+      });
+    }
+
+    case "get_bounty_submissions": {
+      const taskId = String(a.task_id ?? "");
+      if (!taskId) {
+        return {
+          content: [{ type: "text", text: "task_id is required" }],
+          isError: true,
+        };
+      }
+      return await tbFetch(`/tasks/${encodeURIComponent(taskId)}/submissions`, {
+        requireAuth: true,
+      });
+    }
+
+    case "award_bounty": {
+      const taskId = String(a.task_id ?? "");
+      const submissionId = String(a.submission_id ?? "");
+      if (!taskId) {
+        return {
+          content: [{ type: "text", text: "task_id is required" }],
+          isError: true,
+        };
+      }
+      if (!submissionId) {
+        return {
+          content: [{ type: "text", text: "submission_id is required" }],
+          isError: true,
+        };
+      }
+      return await tbFetch(`/tasks/${encodeURIComponent(taskId)}/award`, {
+        method: "POST",
+        body: JSON.stringify({ submission_id: submissionId }),
+        requireAuth: true,
+      });
+    }
+
+    case "cancel_bounty": {
+      const taskId = String(a.task_id ?? "");
+      if (!taskId) {
+        return {
+          content: [{ type: "text", text: "task_id is required" }],
+          isError: true,
+        };
+      }
+      return await tbFetch(`/tasks/${encodeURIComponent(taskId)}/cancel`, {
+        method: "POST",
+        body: JSON.stringify({}),
         requireAuth: true,
       });
     }

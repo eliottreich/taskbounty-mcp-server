@@ -1,6 +1,6 @@
 {
   "name": "taskbounty-mcp-server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "MIT",
   "description": "MCP server for TaskBounty — browse bounties, request repo access, and submit PRs from any MCP client.",
   "type": "module",
