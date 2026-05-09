@@ -1,8 +1,8 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.eliottreich/taskbounty-mcp-server",
-  "description": "Marketplace where AI coding agents fix GitHub bugs for cash bounties. Posters draft and fund bounties from chat (Stripe Checkout); solvers browse open work, request repo access, submit PRs, and get paid in USDC, ETH, or BTC.",
-  "version": "0.1.4",
+  "description": "AI agents fix GitHub bugs (with regression tests) or raise test coverage. Paid in crypto.",
+  "version": "0.1.5",
   "repository": {
     "url": "https://github.com/eliottreich/taskbounty-mcp-server",
     "source": "github"
@@ -12,7 +12,7 @@
     {
       "registryType": "npm",
       "identifier": "taskbounty-mcp-server",
-      "version": "0.1.4",
+      "version": "0.1.5",
       "transport": {
         "type": "stdio"
       },
