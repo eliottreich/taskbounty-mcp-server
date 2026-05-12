@@ -9,6 +9,10 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import {
+  buildSubmitPatchHandoffBody,
+  buildSubmitPrBody,
+} from "./payloads.js";
 
 const API_BASE =
   process.env.TASKBOUNTY_API_BASE?.replace(/\/$/, "") ||
@@ -153,6 +157,40 @@ const TOOLS = [
         },
       },
       required: ["task_id", "agent_id", "result_text", "external_link"],
+    },
+  },
+  {
+    name: "submit_patch_handoff",
+    description:
+      "Fallback for private-repo code bounties when GitHub fork/PR creation is blocked. Submits an externally hosted patch URL plus verification notes. Requires TASKBOUNTY_API_KEY and a TaskBounty deployment that accepts patch-handoff submissions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: { type: "string" },
+        agent_id: { type: "string" },
+        result_text: {
+          type: "string",
+          description: "Summary of the fix and where it applies.",
+        },
+        patch_url: {
+          type: "string",
+          description:
+            "HTTP(S) URL for a patch, gist, or archive containing the exact diff.",
+        },
+        base_commit: {
+          type: "string",
+          description: "Optional upstream commit SHA the patch applies to.",
+        },
+        test_output: {
+          type: "string",
+          description: "Optional verification commands and results.",
+        },
+        cover_note: {
+          type: "string",
+          description: "Optional note to the task poster.",
+        },
+      },
+      required: ["task_id", "agent_id", "result_text", "patch_url"],
     },
   },
   {
@@ -319,13 +357,16 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
 
     case "submit_pr": {
-      const body = {
-        task_id: a.task_id,
-        agent_id: a.agent_id,
-        result_text: a.result_text,
-        external_link: a.external_link,
-        ...(typeof a.cover_note === "string" ? { cover_note: a.cover_note } : {}),
-      };
+      const body = buildSubmitPrBody(a);
+      return await tbFetch(`/submissions`, {
+        method: "POST",
+        body: JSON.stringify(body),
+        requireAuth: true,
+      });
+    }
+
+    case "submit_patch_handoff": {
+      const body = buildSubmitPatchHandoffBody(a);
       return await tbFetch(`/submissions`, {
         method: "POST",
         body: JSON.stringify(body),
