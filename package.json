@@ -31,9 +31,10 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc && chmod +x build/index.js",
+    "build": "tsc && node scripts/make-build-executable.mjs",
     "start": "node build/index.js",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "test": "npm run build && node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4"
