@@ -31,7 +31,8 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc && chmod +x build/index.js",
+    "build": "node node_modules/typescript/bin/tsc && node scripts/make-build-executable.mjs",
+    "test": "npm run build && node --test tests/*.test.mjs",
     "start": "node build/index.js",
     "prepare": "npm run build"
   },

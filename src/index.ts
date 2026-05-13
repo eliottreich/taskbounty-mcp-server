@@ -9,6 +9,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { buildPatchHandoffBody, buildSubmitPrBody } from "./submissions.js";
 
 const API_BASE =
   process.env.TASKBOUNTY_API_BASE?.replace(/\/$/, "") ||
@@ -117,7 +118,7 @@ const TOOLS = [
   {
     name: "request_repo_access",
     description:
-      "For private code-task repos: mint a short-lived (~1h) read-only git clone URL. Read-only — push to your own fork to PR. Requires TASKBOUNTY_API_KEY.",
+      "For private code-task repos: mint a short-lived (~1h) read-only git clone URL. If fork or upstream PR creation is blocked, submit a patch handoff with submit_patch. Requires TASKBOUNTY_API_KEY.",
     inputSchema: {
       type: "object",
       properties: {
@@ -153,6 +154,54 @@ const TOOLS = [
         },
       },
       required: ["task_id", "agent_id", "result_text", "external_link"],
+    },
+  },
+  {
+    name: "submit_patch",
+    description:
+      "Submit a patch handoff for private-repo code tasks when the agent can clone but cannot fork or open an upstream PR. Provide exactly one of patch_text, patch_url, or patch_file_path. Requires TASKBOUNTY_API_KEY.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: { type: "string" },
+        agent_id: { type: "string" },
+        result_text: {
+          type: "string",
+          description: "Summary of the work done.",
+        },
+        patch_text: {
+          type: "string",
+          description: "Unified diff or git format-patch text.",
+        },
+        patch_url: {
+          type: "string",
+          description: "HTTPS URL to a patch artifact. Used as external_link for compatibility.",
+        },
+        patch_file_path: {
+          type: "string",
+          description: "Local UTF-8 patch file path to read and submit as patch_text.",
+        },
+        base_commit: {
+          type: "string",
+          description: "Optional commit SHA the patch was created against.",
+        },
+        changed_files: {
+          anyOf: [
+            { type: "array", items: { type: "string" } },
+            { type: "string" },
+          ],
+          description: "Optional changed file list for reviewer context.",
+        },
+        verification: {
+          type: "string",
+          description: "Optional verification command output or summary.",
+        },
+        cover_note: {
+          type: "string",
+          description: "Optional note to the task poster.",
+        },
+      },
+      required: ["task_id", "agent_id", "result_text"],
     },
   },
   {
@@ -319,13 +368,32 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
 
     case "submit_pr": {
-      const body = {
-        task_id: a.task_id,
-        agent_id: a.agent_id,
-        result_text: a.result_text,
-        external_link: a.external_link,
-        ...(typeof a.cover_note === "string" ? { cover_note: a.cover_note } : {}),
-      };
+      let body: Record<string, unknown>;
+      try {
+        body = buildSubmitPrBody(a);
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: err instanceof Error ? err.message : String(err) }],
+          isError: true,
+        };
+      }
+      return await tbFetch(`/submissions`, {
+        method: "POST",
+        body: JSON.stringify(body),
+        requireAuth: true,
+      });
+    }
+
+    case "submit_patch": {
+      let body: Record<string, unknown>;
+      try {
+        body = buildPatchHandoffBody(a);
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: err instanceof Error ? err.message : String(err) }],
+          isError: true,
+        };
+      }
       return await tbFetch(`/submissions`, {
         method: "POST",
         body: JSON.stringify(body),
