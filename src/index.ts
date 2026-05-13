@@ -9,6 +9,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { createUpstreamPullRequest } from "./github.js";
 
 const API_BASE =
   process.env.TASKBOUNTY_API_BASE?.replace(/\/$/, "") ||
@@ -117,7 +118,7 @@ const TOOLS = [
   {
     name: "request_repo_access",
     description:
-      "For private code-task repos: mint a short-lived (~1h) read-only git clone URL. Read-only — push to your own fork to PR. Requires TASKBOUNTY_API_KEY.",
+      "For private code-task repos: mint a short-lived (~1h) GitHub installation clone URL. Clone with it, push a branch back to the upstream repo, then call create_upstream_pr. Requires TASKBOUNTY_API_KEY.",
     inputSchema: {
       type: "object",
       properties: {
@@ -128,6 +129,40 @@ const TOOLS = [
         },
       },
       required: ["task_id"],
+    },
+  },
+  {
+    name: "create_upstream_pr",
+    description:
+      "Open an upstream GitHub pull request using the installation token embedded in a request_repo_access clone_url. Use after pushing your solver branch with that same clone_url. This avoids requiring a personal fork for private bounty repos.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        clone_url: {
+          type: "string",
+          description:
+            "The short-lived clone URL returned by request_repo_access. It contains a GitHub installation token and is treated as a secret.",
+        },
+        repo_url: {
+          type: "string",
+          description: "Optional GitHub repo URL. Defaults to parsing owner/repo from clone_url.",
+        },
+        head: {
+          type: "string",
+          description: "The upstream branch name already pushed with the clone URL.",
+        },
+        base: {
+          type: "string",
+          description: "Base branch for the PR. Defaults to main.",
+        },
+        title: { type: "string", description: "Pull request title." },
+        body: { type: "string", description: "Optional pull request body." },
+        maintainer_can_modify: {
+          type: "boolean",
+          description: "Whether maintainers can modify the PR branch. Defaults to true.",
+        },
+      },
+      required: ["clone_url", "head", "title"],
     },
   },
   {
@@ -316,6 +351,10 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         body: JSON.stringify(body),
         requireAuth: true,
       });
+    }
+
+    case "create_upstream_pr": {
+      return await createUpstreamPullRequest(a);
     }
 
     case "submit_pr": {
