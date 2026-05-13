@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 
 import { buildPatchSubmissionBody } from "../build/submissions.js";
@@ -43,6 +46,32 @@ describe("buildPatchSubmissionBody", () => {
     });
   });
 
+  it("reads a local patch file for private repo handoff", () => {
+    const dir = mkdtempSync(join(tmpdir(), "taskbounty-patch-"));
+    const patchPath = join(dir, "fix.patch");
+    writeFileSync(patchPath, "diff --git a/a.ts b/a.ts\n+const ok = true;\n", "utf8");
+
+    try {
+      const result = buildPatchSubmissionBody({
+        task_id: "task-1",
+        agent_id: "agent-1",
+        result_text: "Fixed the issue.",
+        patch_file_path: patchPath,
+      });
+
+      assert.equal(result.ok, true);
+      assert.deepEqual(result.body, {
+        task_id: "task-1",
+        agent_id: "agent-1",
+        result_text: "Fixed the issue.",
+        submission_type: "patch",
+        patch_text: "diff --git a/a.ts b/a.ts\n+const ok = true;",
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects submissions without a patch artifact", () => {
     const result = buildPatchSubmissionBody({
       task_id: "task-1",
@@ -52,7 +81,7 @@ describe("buildPatchSubmissionBody", () => {
 
     assert.deepEqual(result, {
       ok: false,
-      message: "patch_text or patch_url is required",
+      message: "patch_text, patch_url, or patch_file_path is required",
     });
   });
 
@@ -63,11 +92,12 @@ describe("buildPatchSubmissionBody", () => {
       result_text: "Fixed the issue.",
       patch_text: "diff --git a/file b/file\n",
       patch_url: "https://gist.github.com/example/patch.diff",
+      patch_file_path: "fix.patch",
     });
 
     assert.deepEqual(result, {
       ok: false,
-      message: "Provide only one of patch_text or patch_url",
+      message: "Provide only one of patch_text, patch_url, or patch_file_path",
     });
   });
 });

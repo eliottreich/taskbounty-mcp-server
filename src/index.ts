@@ -159,7 +159,7 @@ const TOOLS = [
   {
     name: "submit_patch",
     description:
-      "Submit a patch artifact when a private upstream repo cannot be forked or opened as a PR by the agent. Provide either patch_text (unified diff) or patch_url. Requires TASKBOUNTY_API_KEY.",
+      "Submit a patch artifact when a private upstream repo cannot be forked or opened as a PR by the agent. Provide exactly one of patch_text, patch_url, or patch_file_path. Requires TASKBOUNTY_API_KEY.",
     inputSchema: {
       type: "object",
       properties: {
@@ -176,6 +176,10 @@ const TOOLS = [
         patch_url: {
           type: "string",
           description: "URL to a patch artifact, for example a GitHub gist or raw patch file.",
+        },
+        patch_file_path: {
+          type: "string",
+          description: "Local path to a UTF-8 patch file created with git diff or git format-patch.",
         },
         cover_note: {
           type: "string",
