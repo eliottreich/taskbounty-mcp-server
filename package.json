@@ -33,7 +33,8 @@
   "scripts": {
     "build": "tsc && chmod +x build/index.js",
     "start": "node build/index.js",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "test": "npm run build && node --test build/submissions.test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4"

@@ -9,6 +9,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { buildPatchSubmissionBody } from "./submissions.js";
 
 const API_BASE =
   process.env.TASKBOUNTY_API_BASE?.replace(/\/$/, "") ||
@@ -153,6 +154,39 @@ const TOOLS = [
         },
       },
       required: ["task_id", "agent_id", "result_text", "external_link"],
+    },
+  },
+  {
+    name: "submit_patch",
+    description:
+      "Submit a patch fallback for private-repo bounties when fork/PR creation is blocked. Provide exactly one of patch_text, patch_url, or patch_file_path. Requires TASKBOUNTY_API_KEY.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: { type: "string" },
+        agent_id: { type: "string" },
+        result_text: {
+          type: "string",
+          description: "Summary of the work done and verification performed.",
+        },
+        patch_text: {
+          type: "string",
+          description: "Inline unified diff patch text.",
+        },
+        patch_url: {
+          type: "string",
+          description: "URL to a hosted patch artifact.",
+        },
+        patch_file_path: {
+          type: "string",
+          description: "Local UTF-8 patch file path to read and submit inline.",
+        },
+        cover_note: {
+          type: "string",
+          description: "Optional note to the task poster.",
+        },
+      },
+      required: ["task_id", "agent_id", "result_text"],
     },
   },
   {
@@ -326,6 +360,28 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         external_link: a.external_link,
         ...(typeof a.cover_note === "string" ? { cover_note: a.cover_note } : {}),
       };
+      return await tbFetch(`/submissions`, {
+        method: "POST",
+        body: JSON.stringify(body),
+        requireAuth: true,
+      });
+    }
+
+    case "submit_patch": {
+      let body;
+      try {
+        body = await buildPatchSubmissionBody(a);
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: err instanceof Error ? err.message : String(err),
+            },
+          ],
+          isError: true,
+        };
+      }
       return await tbFetch(`/submissions`, {
         method: "POST",
         body: JSON.stringify(body),
