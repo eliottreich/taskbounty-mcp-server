@@ -1,0 +1,103 @@
+import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, it } from "node:test";
+
+import { buildPatchSubmissionBody } from "../build/submissions.js";
+
+describe("buildPatchSubmissionBody", () => {
+  it("builds an inline patch submission without requiring a PR URL", () => {
+    const result = buildPatchSubmissionBody({
+      task_id: "task-1",
+      agent_id: "agent-1",
+      result_text: "Fixed the DST crash and added a regression test.",
+      patch_text: "diff --git a/src/lib/utils.ts b/src/lib/utils.ts\n",
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.body, {
+      task_id: "task-1",
+      agent_id: "agent-1",
+      result_text: "Fixed the DST crash and added a regression test.",
+      submission_type: "patch",
+      patch_text: "diff --git a/src/lib/utils.ts b/src/lib/utils.ts",
+    });
+  });
+
+  it("uses a patch artifact URL as the external link for compatibility", () => {
+    const result = buildPatchSubmissionBody({
+      task_id: "task-1",
+      agent_id: "agent-1",
+      result_text: "Fixed the issue.",
+      patch_url: "https://gist.github.com/example/patch.diff",
+      cover_note: "Private repo PR creation was not available.",
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.body, {
+      task_id: "task-1",
+      agent_id: "agent-1",
+      result_text: "Fixed the issue.",
+      submission_type: "patch",
+      cover_note: "Private repo PR creation was not available.",
+      patch_url: "https://gist.github.com/example/patch.diff",
+      external_link: "https://gist.github.com/example/patch.diff",
+    });
+  });
+
+  it("reads a local patch file for private repo handoff", () => {
+    const dir = mkdtempSync(join(tmpdir(), "taskbounty-patch-"));
+    const patchPath = join(dir, "fix.patch");
+    writeFileSync(patchPath, "diff --git a/a.ts b/a.ts\n+const ok = true;\n", "utf8");
+
+    try {
+      const result = buildPatchSubmissionBody({
+        task_id: "task-1",
+        agent_id: "agent-1",
+        result_text: "Fixed the issue.",
+        patch_file_path: patchPath,
+      });
+
+      assert.equal(result.ok, true);
+      assert.deepEqual(result.body, {
+        task_id: "task-1",
+        agent_id: "agent-1",
+        result_text: "Fixed the issue.",
+        submission_type: "patch",
+        patch_text: "diff --git a/a.ts b/a.ts\n+const ok = true;",
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects submissions without a patch artifact", () => {
+    const result = buildPatchSubmissionBody({
+      task_id: "task-1",
+      agent_id: "agent-1",
+      result_text: "Fixed the issue.",
+    });
+
+    assert.deepEqual(result, {
+      ok: false,
+      message: "patch_text, patch_url, or patch_file_path is required",
+    });
+  });
+
+  it("rejects ambiguous patch artifacts", () => {
+    const result = buildPatchSubmissionBody({
+      task_id: "task-1",
+      agent_id: "agent-1",
+      result_text: "Fixed the issue.",
+      patch_text: "diff --git a/file b/file\n",
+      patch_url: "https://gist.github.com/example/patch.diff",
+      patch_file_path: "fix.patch",
+    });
+
+    assert.deepEqual(result, {
+      ok: false,
+      message: "Provide only one of patch_text, patch_url, or patch_file_path",
+    });
+  });
+});
