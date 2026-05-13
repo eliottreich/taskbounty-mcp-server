@@ -11,6 +11,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import {
   buildSubmitPatchHandoffBody,
+  buildSubmitPatchBody,
   buildSubmitPrBody,
 } from "./payloads.js";
 
@@ -121,7 +122,7 @@ const TOOLS = [
   {
     name: "request_repo_access",
     description:
-      "For private code-task repos: mint a short-lived (~1h) read-only git clone URL. Read-only — push to your own fork to PR. Requires TASKBOUNTY_API_KEY.",
+      "For private code-task repos: mint a short-lived (~1h) read-only git clone URL. Read-only — push to your own fork to PR when possible, or use submit_patch when upstream PR creation is blocked. Requires TASKBOUNTY_API_KEY.",
     inputSchema: {
       type: "object",
       properties: {
@@ -160,9 +161,9 @@ const TOOLS = [
     },
   },
   {
-    name: "submit_patch_handoff",
+    name: "submit_patch",
     description:
-      "Fallback for private-repo code bounties when GitHub fork/PR creation is blocked. Submits an externally hosted patch URL plus verification notes. Requires TASKBOUNTY_API_KEY and a TaskBounty deployment that accepts patch-handoff submissions.",
+      "Submit a patch artifact when a private upstream repo cannot be forked or opened as a PR by the agent. Provide exactly one of patch_text, patch_url, or patch_file_path. Requires TASKBOUNTY_API_KEY.",
     inputSchema: {
       type: "object",
       properties: {
@@ -170,12 +171,20 @@ const TOOLS = [
         agent_id: { type: "string" },
         result_text: {
           type: "string",
-          description: "Summary of the fix and where it applies.",
+          description: "Summary of the work done and tests run.",
+        },
+        patch_text: {
+          type: "string",
+          description: "Unified diff text created with git diff or git format-patch.",
         },
         patch_url: {
           type: "string",
           description:
-            "HTTP(S) URL for a patch, gist, or archive containing the exact diff.",
+            "HTTP(S) URL to a patch artifact, such as a private gist or raw patch file.",
+        },
+        patch_file_path: {
+          type: "string",
+          description: "Local UTF-8 path to a patch file created with git diff or git format-patch.",
         },
         base_commit: {
           type: "string",
@@ -190,7 +199,49 @@ const TOOLS = [
           description: "Optional note to the task poster.",
         },
       },
-      required: ["task_id", "agent_id", "result_text", "patch_url"],
+      required: ["task_id", "agent_id", "result_text"],
+    },
+  },
+  {
+    name: "submit_patch_handoff",
+    description:
+      "Backward-compatible alias for submit_patch. Fallback for private-repo code bounties when GitHub fork/PR creation is blocked. Provide exactly one of patch_text, patch_url, or patch_file_path.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: { type: "string" },
+        agent_id: { type: "string" },
+        result_text: {
+          type: "string",
+          description: "Summary of the fix and where it applies.",
+        },
+        patch_url: {
+          type: "string",
+          description:
+            "HTTP(S) URL for a patch, gist, or archive containing the exact diff.",
+        },
+        patch_text: {
+          type: "string",
+          description: "Unified diff text created with git diff or git format-patch.",
+        },
+        patch_file_path: {
+          type: "string",
+          description: "Local UTF-8 path to a patch file created with git diff or git format-patch.",
+        },
+        base_commit: {
+          type: "string",
+          description: "Optional upstream commit SHA the patch applies to.",
+        },
+        test_output: {
+          type: "string",
+          description: "Optional verification commands and results.",
+        },
+        cover_note: {
+          type: "string",
+          description: "Optional note to the task poster.",
+        },
+      },
+      required: ["task_id", "agent_id", "result_text"],
     },
   },
   {
@@ -365,8 +416,43 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       });
     }
 
+    case "submit_patch": {
+      let body: Record<string, unknown>;
+      try {
+        body = buildSubmitPatchBody(a);
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: err instanceof Error ? err.message : String(err),
+            },
+          ],
+          isError: true,
+        };
+      }
+      return await tbFetch(`/submissions`, {
+        method: "POST",
+        body: JSON.stringify(body),
+        requireAuth: true,
+      });
+    }
+
     case "submit_patch_handoff": {
-      const body = buildSubmitPatchHandoffBody(a);
+      let body: Record<string, unknown>;
+      try {
+        body = buildSubmitPatchHandoffBody(a);
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: err instanceof Error ? err.message : String(err),
+            },
+          ],
+          isError: true,
+        };
+      }
       return await tbFetch(`/submissions`, {
         method: "POST",
         body: JSON.stringify(body),
