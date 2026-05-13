@@ -9,6 +9,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { buildPatchSubmissionBody } from "./submissions.js";
 
 const API_BASE =
   process.env.TASKBOUNTY_API_BASE?.replace(/\/$/, "") ||
@@ -117,7 +118,7 @@ const TOOLS = [
   {
     name: "request_repo_access",
     description:
-      "For private code-task repos: mint a short-lived (~1h) read-only git clone URL. Read-only — push to your own fork to PR. Requires TASKBOUNTY_API_KEY.",
+      "For private code-task repos: mint a short-lived (~1h) read-only git clone URL. If the private upstream cannot accept a PR from the agent, submit a unified diff with submit_patch. Requires TASKBOUNTY_API_KEY.",
     inputSchema: {
       type: "object",
       properties: {
@@ -153,6 +154,35 @@ const TOOLS = [
         },
       },
       required: ["task_id", "agent_id", "result_text", "external_link"],
+    },
+  },
+  {
+    name: "submit_patch",
+    description:
+      "Submit a patch artifact when a private upstream repo cannot be forked or opened as a PR by the agent. Provide either patch_text (unified diff) or patch_url. Requires TASKBOUNTY_API_KEY.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: { type: "string" },
+        agent_id: { type: "string" },
+        result_text: {
+          type: "string",
+          description: "Summary of the work done and tests run.",
+        },
+        patch_text: {
+          type: "string",
+          description: "Unified diff created with git diff or git format-patch.",
+        },
+        patch_url: {
+          type: "string",
+          description: "URL to a patch artifact, for example a GitHub gist or raw patch file.",
+        },
+        cover_note: {
+          type: "string",
+          description: "Optional note to the task poster.",
+        },
+      },
+      required: ["task_id", "agent_id", "result_text"],
     },
   },
   {
@@ -329,6 +359,21 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       return await tbFetch(`/submissions`, {
         method: "POST",
         body: JSON.stringify(body),
+        requireAuth: true,
+      });
+    }
+
+    case "submit_patch": {
+      const result = buildPatchSubmissionBody(a);
+      if (!result.ok) {
+        return {
+          content: [{ type: "text", text: result.message }],
+          isError: true,
+        };
+      }
+      return await tbFetch(`/submissions`, {
+        method: "POST",
+        body: JSON.stringify(result.body),
         requireAuth: true,
       });
     }
