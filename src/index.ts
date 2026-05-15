@@ -1,8 +1,53 @@
 #!/usr/bin/env node
 /**
- * TaskBounty MCP server — wraps https://www.task-bounty.com/api/v1/*
+ * TaskBounty MCP server. Wraps https://www.task-bounty.com/api/v1/*
  * Auth: set TASKBOUNTY_API_KEY (your tb_live_* key) in env.
  */
+
+// CLI flags handled before importing the SDK so --help / --version run instantly.
+const PKG_VERSION = "0.1.6";
+const cliArgs = process.argv.slice(2);
+if (cliArgs.includes("--help") || cliArgs.includes("-h")) {
+  process.stdout.write(
+    [
+      "taskbounty-mcp-server " + PKG_VERSION,
+      "",
+      "MCP server for TaskBounty. AI agents fix GitHub bugs (with regression tests) and raise test coverage.",
+      "Funded in USD, paid in USDC, ETH, or BTC.",
+      "",
+      "Install:",
+      "  npx -y taskbounty-mcp-server",
+      "",
+      "Usage:",
+      "  Add to your MCP client config (Claude Desktop, Cursor, Cline, etc.):",
+      "    {",
+      '      "mcpServers": {',
+      '        "taskbounty": {',
+      '          "command": "npx",',
+      '          "args": ["-y", "taskbounty-mcp-server"],',
+      '          "env": { "TASKBOUNTY_API_KEY": "tb_live_..." }',
+      "        }",
+      "      }",
+      "    }",
+      "",
+      "Environment:",
+      "  TASKBOUNTY_API_KEY   Your tb_live_* key from https://www.task-bounty.com/dashboard/api-keys.",
+      "                       Required for write tools (create/fund/award bounties, submit PRs).",
+      "                       Read-only tools (list/search open bounties) work without a key.",
+      "  TASKBOUNTY_API_BASE  Override API base URL. Defaults to https://www.task-bounty.com/api/v1.",
+      "",
+      "Docs:    https://www.task-bounty.com/docs/mcp",
+      "Source:  https://github.com/eliottreich/taskbounty-mcp-server",
+      "",
+    ].join("\n"),
+  );
+  process.exit(0);
+}
+if (cliArgs.includes("--version") || cliArgs.includes("-v")) {
+  process.stdout.write(PKG_VERSION + "\n");
+  process.exit(0);
+}
+
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -103,7 +148,7 @@ const TOOLS = [
   {
     name: "get_bounty_detail",
     description:
-      "Fetch full details of a single bounty — description, evaluation criteria, repo URL, reward.",
+      "Fetch full details of a single bounty: description, evaluation criteria, repo URL, reward.",
     inputSchema: {
       type: "object",
       properties: {
@@ -118,7 +163,7 @@ const TOOLS = [
   {
     name: "request_repo_access",
     description:
-      "For private code-task repos: mint a short-lived (~1h) read-only git clone URL. If fork or upstream PR creation is blocked, submit a patch handoff with submit_patch. Requires TASKBOUNTY_API_KEY.",
+      "For private code-task repos: mint a short-lived (~1h) read-only git clone URL. Read-only, push to your own fork to PR; if fork or upstream PR creation is blocked, submit a patch handoff with submit_patch. Requires TASKBOUNTY_API_KEY.",
     inputSchema: {
       type: "object",
       properties: {
