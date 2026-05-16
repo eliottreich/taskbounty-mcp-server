@@ -5,7 +5,7 @@
  */
 
 // CLI flags handled before importing the SDK so --help / --version run instantly.
-const PKG_VERSION = "0.1.6";
+const PKG_VERSION = "0.2.0";
 const cliArgs = process.argv.slice(2);
 if (cliArgs.includes("--help") || cliArgs.includes("-h")) {
   process.stdout.write(
@@ -17,6 +17,15 @@ if (cliArgs.includes("--help") || cliArgs.includes("-h")) {
       "",
       "Install:",
       "  npx -y taskbounty-mcp-server",
+      "",
+      "Creator tools (repo owners):",
+      "  taskbounty_login      Browser device login. No API key needed up front.",
+      "  autopilot_enable      Turn on TaskBounty Autopilot for a GitHub repo.",
+      "  post_from_issue       Post a one-off bounty from an existing GitHub issue.",
+      "",
+      "Solver tools (agents):",
+      "  list_open_bounties, get_bounty_detail, request_repo_access,",
+      "  submit_pr, check_submission_status",
       "",
       "Usage:",
       "  Add to your MCP client config (Claude Desktop, Cursor, Cline, etc.):",
@@ -32,7 +41,8 @@ if (cliArgs.includes("--help") || cliArgs.includes("-h")) {
       "",
       "Environment:",
       "  TASKBOUNTY_API_KEY   Your tb_live_* key from https://www.task-bounty.com/dashboard/api-keys.",
-      "                       Required for write tools (create/fund/award bounties, submit PRs).",
+      "                       Optional. If unset, run taskbounty_login for a browser",
+      "                       device flow (credentials are stored in ~/.taskbounty/credentials.json).",
       "                       Read-only tools (list/search open bounties) work without a key.",
       "  TASKBOUNTY_API_BASE  Override API base URL. Defaults to https://www.task-bounty.com/api/v1.",
       "",
@@ -55,28 +65,77 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { buildPatchHandoffBody, buildSubmitPrBody } from "./submissions.js";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import {
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  existsSync,
+} from "node:fs";
 
 const API_BASE =
   process.env.TASKBOUNTY_API_BASE?.replace(/\/$/, "") ||
   "https://www.task-bounty.com/api/v1";
-const API_KEY = process.env.TASKBOUNTY_API_KEY || "";
+const ENV_API_KEY = process.env.TASKBOUNTY_API_KEY || "";
+
+// Site origin (no /api/v1 suffix). The device-auth endpoints live at /api/mcp/*.
+const SITE_ORIGIN = API_BASE.replace(/\/api\/v1\/?$/, "");
+
+const CRED_DIR = join(homedir(), ".taskbounty");
+const CRED_PATH = join(CRED_DIR, "credentials.json");
 
 type ToolResult = {
   content: { type: "text"; text: string }[];
   isError?: boolean;
 };
 
+function readStoredToken(): string {
+  try {
+    if (!existsSync(CRED_PATH)) return "";
+    const raw = readFileSync(CRED_PATH, "utf8");
+    const parsed = JSON.parse(raw) as { access_token?: string };
+    return typeof parsed.access_token === "string" ? parsed.access_token : "";
+  } catch {
+    return "";
+  }
+}
+
+function persistToken(accessToken: string, userId?: string): void {
+  mkdirSync(CRED_DIR, { recursive: true, mode: 0o700 });
+  writeFileSync(
+    CRED_PATH,
+    JSON.stringify(
+      {
+        access_token: accessToken,
+        taskbounty_user_id: userId ?? null,
+        saved_at: new Date().toISOString(),
+      },
+      null,
+      2,
+    ),
+    { mode: 0o600 },
+  );
+}
+
+// Resolved at call-time so taskbounty_login can persist a token mid-session.
+// Env key wins (CI), then the stored credential file.
+function currentToken(): string {
+  return ENV_API_KEY || readStoredToken();
+}
+
 async function tbFetch(
   path: string,
   init: RequestInit & { requireAuth?: boolean } = {},
 ): Promise<ToolResult> {
   const { requireAuth, headers, ...rest } = init;
-  if (requireAuth && !API_KEY) {
+  const token = currentToken();
+  if (requireAuth && !token) {
     return {
       content: [
         {
           type: "text",
-          text: "Missing TASKBOUNTY_API_KEY environment variable. Set it to your tb_live_* key from https://www.task-bounty.com/dashboard/api-keys.",
+          text: "Not authenticated. Run the taskbounty_login tool to sign in via your browser, or set TASKBOUNTY_API_KEY to your tb_live_* key from https://www.task-bounty.com/dashboard/api-keys.",
         },
       ],
       isError: true,
@@ -87,7 +146,7 @@ async function tbFetch(
     Accept: "application/json",
     ...(headers as Record<string, string> | undefined),
   };
-  if (API_KEY) finalHeaders["Authorization"] = `Bearer ${API_KEY}`;
+  if (token) finalHeaders["Authorization"] = `Bearer ${token}`;
   if (rest.body && !finalHeaders["Content-Type"]) {
     finalHeaders["Content-Type"] = "application/json";
   }
@@ -122,11 +181,223 @@ async function tbFetch(
   return { content: [{ type: "text", text }] };
 }
 
+// --- Device-auth client (browser bootstrap for unauthenticated users) ---
+
+type DeviceStart = {
+  device_code: string;
+  user_code: string;
+  verification_uri: string;
+  verification_uri_complete: string;
+  expires_in: number;
+  interval: number;
+};
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function deviceLogin(clientName: string): Promise<ToolResult> {
+  let start: DeviceStart;
+  try {
+    const res = await fetch(`${SITE_ORIGIN}/api/mcp/device/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ client_name: clientName }),
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Could not start login (HTTP ${res.status}) from ${SITE_ORIGIN}/api/mcp/device/start\n\n${t}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+    start = (await res.json()) as DeviceStart;
+  } catch (err) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Network error starting login: ${err instanceof Error ? err.message : String(err)}`,
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  const deadline = Date.now() + start.expires_in * 1000;
+  let intervalMs = Math.max(1, start.interval) * 1000;
+
+  // First poll happens after one interval, giving the user time to approve.
+  while (Date.now() < deadline) {
+    await sleep(intervalMs);
+    let res: Response;
+    try {
+      res = await fetch(`${SITE_ORIGIN}/api/mcp/device/token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ device_code: start.device_code }),
+      });
+    } catch (err) {
+      // transient network issue; keep polling until the deadline
+      void err;
+      continue;
+    }
+
+    if (res.ok) {
+      const data = (await res.json()) as {
+        access_token: string;
+        token_type?: string;
+        taskbounty_user_id?: string;
+      };
+      try {
+        persistToken(data.access_token, data.taskbounty_user_id);
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Login succeeded but could not write ${CRED_PATH}: ${err instanceof Error ? err.message : String(err)}. Set TASKBOUNTY_API_KEY=${data.access_token} in your environment instead.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              `Logged in. Credentials saved to ${CRED_PATH} (mode 0600).\n` +
+              `For CI or headless use, you can also set the env var:\n` +
+              `  TASKBOUNTY_API_KEY=${data.access_token}\n\n` +
+              `You can now use creator tools like autopilot_enable and post_from_issue.`,
+          },
+        ],
+      };
+    }
+
+    // Non-OK: parse the OAuth-style error to decide whether to keep polling.
+    let errCode = "";
+    try {
+      const body = (await res.json()) as { error?: string };
+      errCode = body.error ?? "";
+    } catch {
+      errCode = "";
+    }
+    if (errCode === "authorization_pending") continue;
+    if (errCode === "slow_down") {
+      intervalMs += 5000;
+      continue;
+    }
+    if (errCode === "expired_token" || errCode === "access_denied") {
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              errCode === "access_denied"
+                ? "Login was denied in the browser. Run taskbounty_login again to retry."
+                : "Login code expired before approval. Run taskbounty_login again to retry.",
+          },
+        ],
+        isError: true,
+      };
+    }
+    // Unknown error: stop rather than spin.
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Login failed (HTTP ${res.status}, error="${errCode}"). Run taskbounty_login again to retry.`,
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: "Login timed out waiting for browser approval. Run taskbounty_login again to retry.",
+      },
+    ],
+    isError: true,
+  };
+}
+
 const TOOLS = [
+  {
+    name: "taskbounty_login",
+    description:
+      "For repo owners: authenticate to TaskBounty via a browser device flow. No API key required up front. Returns a URL and code to approve in the browser, then stores credentials locally so other creator tools work. If already authenticated, it reports that and does nothing. Run this once before autopilot_enable or post_from_issue.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        client_name: {
+          type: "string",
+          description:
+            "Optional label shown on the approval screen (e.g. 'Cursor on my laptop').",
+        },
+      },
+    },
+  },
+  {
+    name: "autopilot_enable",
+    description:
+      "For repo owners: turn on TaskBounty Autopilot for a GitHub repo. Issues labeled with the trigger label get auto-triaged, auto-funded, fixed by AI agents, verified end-to-end, and surfaced as ready-to-merge PRs. First 5 verified PRs are free, then a 14-day trial, no card required. If the GitHub App is not installed yet, returns an install URL to open in the browser. Requires login (run taskbounty_login first).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: {
+          type: "string",
+          description:
+            "GitHub repo as owner/name or a full GitHub URL (e.g. 'acme/widgets' or 'https://github.com/acme/widgets').",
+        },
+        trigger_label: {
+          type: "string",
+          description: "Issue label that triggers Autopilot. Defaults to 'taskbounty'.",
+        },
+      },
+      required: ["repo"],
+    },
+  },
+  {
+    name: "post_from_issue",
+    description:
+      "For repo owners: post a one-off bounty from an existing GitHub issue URL. Triage sizes the bounty automatically unless you pass bounty_usd. Payment is NOT handled here: the response returns a funding URL to open in the browser. For unlimited fixes on a repo, prefer autopilot_enable. Requires login (run taskbounty_login first).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        issue_url: {
+          type: "string",
+          description: "Full GitHub issue URL (e.g. https://github.com/acme/widgets/issues/42).",
+        },
+        bounty_usd: {
+          type: "number",
+          description:
+            "Optional bounty amount in USD. If omitted, triage sizes it automatically.",
+        },
+      },
+      required: ["issue_url"],
+    },
+  },
+  {
+    name: "post_from_current_file",
+    description:
+      "For repo owners: (coming soon) post a bounty from the file currently open in your editor. Not yet implemented.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
   {
     name: "list_open_bounties",
     description:
-      "List currently open, funded bounties on TaskBounty. Returns title, reward, repo, language, and task id/slug.",
+      "For solver agents: list currently open, funded bounties on TaskBounty. Returns title, reward, repo, language, and task id/slug.",
     inputSchema: {
       type: "object",
       properties: {
@@ -163,7 +434,7 @@ const TOOLS = [
   {
     name: "request_repo_access",
     description:
-      "For private code-task repos: mint a short-lived (~1h) read-only git clone URL. Read-only, push to your own fork to PR; if fork or upstream PR creation is blocked, submit a patch handoff with submit_patch. Requires TASKBOUNTY_API_KEY.",
+      "For solver agents: for private code-task repos, mint a short-lived (~1h) read-only git clone URL. Read-only, push to your own fork to PR; if fork or upstream PR creation is blocked, submit a patch handoff with submit_patch. Requires login or TASKBOUNTY_API_KEY.",
     inputSchema: {
       type: "object",
       properties: {
@@ -179,7 +450,7 @@ const TOOLS = [
   {
     name: "submit_pr",
     description:
-      "Submit a solution to a bounty. For code tasks, external_link should be the upstream PR URL. Requires TASKBOUNTY_API_KEY.",
+      "For solver agents: submit a solution to a bounty. For code tasks, external_link should be the upstream PR URL. Requires login or TASKBOUNTY_API_KEY.",
     inputSchema: {
       type: "object",
       properties: {
@@ -252,7 +523,7 @@ const TOOLS = [
   {
     name: "check_submission_status",
     description:
-      "Check status of a submission (pending, accepted, rejected, paid). Requires TASKBOUNTY_API_KEY.",
+      "For solver agents: check status of a submission (pending, accepted, rejected, paid). Requires login or TASKBOUNTY_API_KEY.",
     inputSchema: {
       type: "object",
       properties: {
@@ -375,6 +646,309 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const a = args as Record<string, unknown>;
 
   switch (name) {
+    case "taskbounty_login": {
+      if (currentToken()) {
+        const via = ENV_API_KEY ? "TASKBOUNTY_API_KEY env var" : CRED_PATH;
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Already authenticated (via ${via}). No login needed. To re-authenticate, clear that credential and run taskbounty_login again.`,
+            },
+          ],
+        };
+      }
+      const clientName =
+        typeof a.client_name === "string" && a.client_name
+          ? a.client_name
+          : "taskbounty-mcp-server";
+
+      // Kick off device flow and surface the approval instruction first.
+      let start: DeviceStart | null = null;
+      try {
+        const res = await fetch(`${SITE_ORIGIN}/api/mcp/device/start`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({ client_name: clientName }),
+        });
+        if (res.ok) start = (await res.json()) as DeviceStart;
+      } catch {
+        start = null;
+      }
+      if (!start) {
+        return await deviceLogin(clientName);
+      }
+
+      // Poll inline using the started session.
+      const deadline = Date.now() + start.expires_in * 1000;
+      let intervalMs = Math.max(1, start.interval) * 1000;
+      const instruction =
+        `Open this URL in your browser and approve:\n  ${start.verification_uri_complete}\n` +
+        `Your code: ${start.user_code}\n` +
+        `(If the link does not prefill, go to ${start.verification_uri} and enter the code.)\n\n` +
+        `Waiting for approval...`;
+
+      while (Date.now() < deadline) {
+        await sleep(intervalMs);
+        let res: Response;
+        try {
+          res = await fetch(`${SITE_ORIGIN}/api/mcp/device/token`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json",
+            },
+            body: JSON.stringify({ device_code: start.device_code }),
+          });
+        } catch {
+          continue;
+        }
+        if (res.ok) {
+          const data = (await res.json()) as {
+            access_token: string;
+            taskbounty_user_id?: string;
+          };
+          try {
+            persistToken(data.access_token, data.taskbounty_user_id);
+          } catch (err) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `${instruction}\n\nLogin succeeded but could not write ${CRED_PATH}: ${err instanceof Error ? err.message : String(err)}. Set TASKBOUNTY_API_KEY=${data.access_token} instead.`,
+                },
+              ],
+              isError: true,
+            };
+          }
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  `${instruction}\n\nLogged in. Credentials saved to ${CRED_PATH} (mode 0600).\n` +
+                  `For CI or headless use you can also set TASKBOUNTY_API_KEY=${data.access_token}.\n\n` +
+                  `You can now use autopilot_enable and post_from_issue.`,
+              },
+            ],
+          };
+        }
+        let errCode = "";
+        try {
+          errCode = ((await res.json()) as { error?: string }).error ?? "";
+        } catch {
+          errCode = "";
+        }
+        if (errCode === "authorization_pending") continue;
+        if (errCode === "slow_down") {
+          intervalMs += 5000;
+          continue;
+        }
+        if (errCode === "expired_token" || errCode === "access_denied") {
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  `${instruction}\n\n` +
+                  (errCode === "access_denied"
+                    ? "Login was denied in the browser. Run taskbounty_login again to retry."
+                    : "Login code expired before approval. Run taskbounty_login again to retry."),
+              },
+            ],
+            isError: true,
+          };
+        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${instruction}\n\nLogin failed (HTTP ${res.status}, error="${errCode}"). Run taskbounty_login again to retry.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+      return {
+        content: [
+          {
+            type: "text",
+            text: `${instruction}\n\nLogin timed out waiting for browser approval. Run taskbounty_login again to retry.`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    case "autopilot_enable": {
+      if (!currentToken()) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Not authenticated. Run the taskbounty_login tool first, then retry autopilot_enable.",
+            },
+          ],
+          isError: true,
+        };
+      }
+      const repoRaw = String(a.repo ?? "").trim();
+      if (!repoRaw) {
+        return {
+          content: [{ type: "text", text: "repo is required (owner/name or a GitHub URL)" }],
+          isError: true,
+        };
+      }
+      // Normalize to owner/name.
+      const m = repoRaw.match(
+        /^(?:https?:\/\/github\.com\/)?([^/\s]+)\/([^/\s#?]+?)(?:\.git)?\/?$/i,
+      );
+      if (!m) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Could not parse repo "${repoRaw}". Use owner/name or a full GitHub URL.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+      const repo = `${m[1]}/${m[2]}`;
+      const triggerLabel =
+        typeof a.trigger_label === "string" && a.trigger_label
+          ? a.trigger_label
+          : "taskbounty";
+
+      const result = await tbFetch(`/autopilot/enable`, {
+        method: "POST",
+        body: JSON.stringify({ repo, trigger_label: triggerLabel }),
+        requireAuth: true,
+      });
+      if (result.isError) return result;
+
+      let payload: Record<string, unknown> = {};
+      try {
+        payload = JSON.parse(result.content[0]?.text ?? "{}");
+      } catch {
+        payload = {};
+      }
+      const installUrl =
+        (typeof payload.install_url === "string" && payload.install_url) ||
+        (typeof payload.github_app_install_url === "string" &&
+          payload.github_app_install_url) ||
+        "";
+
+      if (installUrl) {
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                `Almost there. The TaskBounty GitHub App is not installed on ${repo} yet.\n\n` +
+                `Open this URL in your browser to install and grant access:\n  ${installUrl}\n\n` +
+                `After installing, Autopilot turns on automatically. Trigger label: "${triggerLabel}".\n` +
+                `First 5 verified PRs free, then a 14-day trial, no card required. ` +
+                `Lock in a plan anytime at ${SITE_ORIGIN}/dashboard/autopilot.`,
+            },
+          ],
+        };
+      }
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              `Autopilot trial started for ${repo} (trigger label: "${triggerLabel}").\n` +
+              `First 5 verified PRs free, then a 14-day trial, no card required.\n` +
+              `Lock in a plan anytime at ${SITE_ORIGIN}/dashboard/autopilot.\n\n` +
+              `Server response:\n${result.content[0]?.text ?? ""}`,
+          },
+        ],
+      };
+    }
+
+    case "post_from_issue": {
+      if (!currentToken()) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Not authenticated. Run the taskbounty_login tool first, then retry post_from_issue.",
+            },
+          ],
+          isError: true,
+        };
+      }
+      const issueUrl = String(a.issue_url ?? "").trim();
+      if (!issueUrl) {
+        return {
+          content: [{ type: "text", text: "issue_url is required" }],
+          isError: true,
+        };
+      }
+      const body: Record<string, unknown> = { issue_url: issueUrl };
+      if (typeof a.bounty_usd === "number") body.bounty_usd = a.bounty_usd;
+
+      const result = await tbFetch(`/bounties/from-issue`, {
+        method: "POST",
+        body: JSON.stringify(body),
+        requireAuth: true,
+      });
+      if (result.isError) return result;
+
+      let payload: Record<string, unknown> = {};
+      try {
+        payload = JSON.parse(result.content[0]?.text ?? "{}");
+      } catch {
+        payload = {};
+      }
+      const fundingUrl =
+        (typeof payload.funding_url === "string" && payload.funding_url) ||
+        (typeof payload.checkout_url === "string" && payload.checkout_url) ||
+        "";
+
+      const upsell =
+        `\n\nTip: to fix unlimited issues on this repo without per-bounty funding, ` +
+        `run autopilot_enable.`;
+
+      if (fundingUrl) {
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                `Bounty drafted from the issue. Funding happens in the browser ` +
+                `(no payment is taken by this tool).\n\nOpen this URL to fund it:\n  ${fundingUrl}` +
+                upsell,
+            },
+          ],
+        };
+      }
+      return {
+        content: [
+          {
+            type: "text",
+            text: `${result.content[0]?.text ?? ""}${upsell}`,
+          },
+        ],
+      };
+    }
+
+    case "post_from_current_file": {
+      return {
+        content: [
+          {
+            type: "text",
+            text: "Coming soon. Use post_from_issue or autopilot_enable for now.",
+          },
+        ],
+      };
+    }
+
     case "list_open_bounties": {
       const params = new URLSearchParams();
       if (typeof a.platform === "string") params.set("platform", a.platform);
