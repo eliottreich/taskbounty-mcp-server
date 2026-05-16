@@ -19,7 +19,7 @@
       "environmentVariables": [
         {
           "name": "TASKBOUNTY_API_KEY",
-          "description": "Your tb_live_* key from https://www.task-bounty.com/dashboard/api-keys. Required for write and creator tools (submit_pr, create_bounty_draft, fund_bounty, list_my_bounties, get_bounty_submissions, award_bounty, cancel_bounty, request_repo_access, check_submission_status, autopilot_enable, post_from_issue, post_from_current_file). Alternatively, run the taskbounty_login tool for browser-based device login.",
+          "description": "Your tb_live_* key from https://www.task-bounty.com/dashboard/api-keys. Required for write and creator tools (submit_pr, submit_patch, create_bounty_draft, fund_bounty, list_my_bounties, get_bounty_submissions, award_bounty, cancel_bounty, request_repo_access, check_submission_status, autopilot_enable, post_from_issue, post_from_current_file). Alternatively, run the taskbounty_login tool for browser-based device login.",
           "isRequired": false,
           "isSecret": true
         },
