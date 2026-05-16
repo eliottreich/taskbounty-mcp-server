@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "taskbounty": {
+      "command": "npx",
+      "args": ["-y", "taskbounty-mcp-server"],
+      "env": {
+        "TASKBOUNTY_API_KEY": "${TASKBOUNTY_API_KEY}"
+      }
+    }
+  }
+}
