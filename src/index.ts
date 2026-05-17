@@ -5,7 +5,8 @@
  */
 
 // CLI flags handled before importing the SDK so --help / --version run instantly.
-const PKG_VERSION = "0.3.0";
+import { PKG_VERSION, SERVER_INFO } from "./version.js";
+
 const cliArgs = process.argv.slice(2);
 if (cliArgs.includes("--help") || cliArgs.includes("-h")) {
   process.stdout.write(
@@ -594,7 +595,7 @@ const TOOLS = [
 ] as const;
 
 const server = new Server(
-  { name: "taskbounty-mcp-server", version: "0.1.0" },
+  SERVER_INFO,
   { capabilities: { tools: {} } },
 );
 
