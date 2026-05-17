@@ -1,7 +1,7 @@
 {
   "name": "taskbounty-mcp-server",
   "mcpName": "io.github.eliottreich/taskbounty-mcp-server",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "MIT",
   "description": "MCP server for TaskBounty. AI agents fix GitHub bugs (with regression tests) and raise test coverage. Funded in USD, paid in USDC, ETH, or BTC.",
   "keywords": [

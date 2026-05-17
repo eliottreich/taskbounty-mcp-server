@@ -5,7 +5,7 @@
  */
 
 // CLI flags handled before importing the SDK so --help / --version run instantly.
-const PKG_VERSION = "0.2.0";
+const PKG_VERSION = "0.3.0";
 const cliArgs = process.argv.slice(2);
 if (cliArgs.includes("--help") || cliArgs.includes("-h")) {
   process.stdout.write(
@@ -22,6 +22,7 @@ if (cliArgs.includes("--help") || cliArgs.includes("-h")) {
       "  taskbounty_login      Browser device login. No API key needed up front.",
       "  autopilot_enable      Turn on TaskBounty Autopilot for a GitHub repo.",
       "  post_from_issue       Post a one-off bounty from an existing GitHub issue.",
+      "  get_referral_link     Get your Champion referral link + ready-to-post share copy.",
       "",
       "Solver tools (agents):",
       "  list_open_bounties, get_bounty_detail, request_repo_access,",
@@ -581,6 +582,15 @@ const TOOLS = [
       required: ["task_id"],
     },
   },
+  {
+    name: "get_referral_link",
+    description:
+      "For repo owners and agents: get your TaskBounty Champion referral link plus ready-to-post, generic share copy (tweet, short, generic). Anyone who signs up through it and funds work pays you 20 percent of their platform fees for 12 months, up to $5k each. This tool only returns the link and copy; it does not post anything. Requires login (run taskbounty_login first).",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
 ] as const;
 
 const server = new Server(
@@ -1070,6 +1080,30 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         body: JSON.stringify({}),
         requireAuth: true,
       });
+    }
+
+    case "get_referral_link": {
+      const result = await tbFetch(`/champion/link`, { requireAuth: true });
+      if (result.isError) return result;
+      const raw = result.content[0]?.text ?? "{}";
+      let summary = "Referral link ready.";
+      try {
+        const parsed = JSON.parse(raw) as {
+          data?: { referral_url?: string };
+        };
+        const refUrl = parsed.data?.referral_url;
+        if (refUrl) {
+          summary = `Your referral link: ${refUrl} . Ready-to-post share copy is in the JSON below (tweet, short, generic). Nothing is posted automatically; share it wherever you want.`;
+        }
+      } catch {
+        // Fall through with the generic summary; raw JSON is still returned.
+      }
+      return {
+        content: [
+          { type: "text", text: summary },
+          { type: "text", text: raw },
+        ],
+      };
     }
 
     default:
