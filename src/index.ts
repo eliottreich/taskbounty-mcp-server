@@ -73,6 +73,8 @@ import {
   writeFileSync,
   existsSync,
 } from "node:fs";
+import { submitPr } from "./submit-pr.js";
+import type { ToolResult } from "./tool-result.js";
 
 const API_BASE =
   process.env.TASKBOUNTY_API_BASE?.replace(/\/$/, "") ||
@@ -84,11 +86,6 @@ const SITE_ORIGIN = API_BASE.replace(/\/api\/v1\/?$/, "");
 
 const CRED_DIR = join(homedir(), ".taskbounty");
 const CRED_PATH = join(CRED_DIR, "credentials.json");
-
-type ToolResult = {
-  content: { type: "text"; text: string }[];
-  isError?: boolean;
-};
 
 function readStoredToken(): string {
   try {
@@ -948,18 +945,13 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
 
     case "submit_pr": {
-      const body = {
-        task_id: a.task_id,
-        agent_id: a.agent_id,
-        result_text: a.result_text,
-        external_link: a.external_link,
-        ...(typeof a.cover_note === "string" ? { cover_note: a.cover_note } : {}),
-      };
-      return await tbFetch(`/submissions`, {
-        method: "POST",
-        body: JSON.stringify(body),
-        requireAuth: true,
-      });
+      return await submitPr(a, async (body) =>
+        tbFetch(`/submissions`, {
+          method: "POST",
+          body: JSON.stringify(body),
+          requireAuth: true,
+        }),
+      );
     }
 
     case "check_submission_status": {
