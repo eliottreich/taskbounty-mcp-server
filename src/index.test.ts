@@ -1,4 +1,4 @@
-// Regression tests for issues #14 and #15.
+// Regression tests for issues #14, #15, and #17.
 // Minimal and self-contained (see issue #16 for a full test harness).
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -12,6 +12,11 @@ const buildEntry = join(here, "..", "build", "index.js");
 const pkg = JSON.parse(
   readFileSync(join(here, "..", "package.json"), "utf8"),
 ) as { version: string };
+const lockfile = JSON.parse(
+  readFileSync(join(here, "..", "package-lock.json"), "utf8"),
+) as {
+  packages: Record<string, { version?: string }>;
+};
 
 // Issue #14: the server must advertise the real package version, not a
 // stale hardcoded one, and --version must agree with package.json.
@@ -52,4 +57,12 @@ test("#15: submit_pr validates required args before building the request body", 
     caseBody.indexOf("is required") < caseBody.indexOf("const body"),
     "required-arg validation must run before the body is built",
   );
+});
+
+// Issue #17: npm audit flagged vulnerable transitive lockfile resolutions.
+// This test fails on the old lockfile and keeps future lock refreshes honest.
+test("#17: lockfile resolves audit-sensitive transitives to patched versions", () => {
+  assert.equal(lockfile.packages["node_modules/express-rate-limit"]?.version, "8.5.2");
+  assert.equal(lockfile.packages["node_modules/hono"]?.version, "4.12.19");
+  assert.equal(lockfile.packages["node_modules/ip-address"]?.version, "10.2.0");
 });
