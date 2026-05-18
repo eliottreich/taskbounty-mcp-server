@@ -67,6 +67,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   mkdirSync,
   readFileSync,
@@ -84,6 +85,13 @@ const SITE_ORIGIN = API_BASE.replace(/\/api\/v1\/?$/, "");
 
 const CRED_DIR = join(homedir(), ".taskbounty");
 const CRED_PATH = join(CRED_DIR, "credentials.json");
+
+export function normalizeGitHubRepo(repoRaw: string): string | null {
+  const m = repoRaw
+    .trim()
+    .match(/^(?:https?:\/\/github\.com\/)?([^/\s]+)\/([^/\s#?]+?)(?:\.git)?\/?$/i);
+  return m ? `${m[1]}/${m[2]}` : null;
+}
 
 type ToolResult = {
   content: { type: "text"; text: string }[];
@@ -764,10 +772,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         };
       }
       // Normalize to owner/name.
-      const m = repoRaw.match(
-        /^(?:https?:\/\/github\.com\/)?([^/\s]+)\/([^/\s#?]+?)(?:\.git)?\/?$/i,
-      );
-      if (!m) {
+      const repo = normalizeGitHubRepo(repoRaw);
+      if (!repo) {
         return {
           content: [
             {
@@ -778,7 +784,6 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           isError: true,
         };
       }
-      const repo = `${m[1]}/${m[2]}`;
       const triggerLabel =
         typeof a.trigger_label === "string" && a.trigger_label
           ? a.trigger_label
@@ -1129,7 +1134,9 @@ async function main() {
   console.error("[taskbounty-mcp] ready on stdio");
 }
 
-main().catch((err) => {
-  console.error("[taskbounty-mcp] fatal", err);
-  process.exit(1);
-});
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main().catch((err) => {
+    console.error("[taskbounty-mcp] fatal", err);
+    process.exit(1);
+  });
+}
