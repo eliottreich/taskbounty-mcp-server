@@ -53,3 +53,22 @@ test("#15: submit_pr validates required args before building the request body", 
     "required-arg validation must run before the body is built",
   );
 });
+
+test("#16: normalizeGitHubRepo accepts supported GitHub repo formats", async () => {
+  const mod = await import(buildEntry);
+  const normalizeGitHubRepo = mod.normalizeGitHubRepo as (repoRaw: string) => string | null;
+
+  assert.equal(normalizeGitHubRepo("owner/name"), "owner/name");
+  assert.equal(normalizeGitHubRepo("https://github.com/owner/name"), "owner/name");
+  assert.equal(normalizeGitHubRepo("https://github.com/owner/name.git"), "owner/name");
+  assert.equal(normalizeGitHubRepo("https://github.com/owner/name/"), "owner/name");
+});
+
+test("#16: normalizeGitHubRepo rejects malformed repo strings", async () => {
+  const mod = await import(buildEntry);
+  const normalizeGitHubRepo = mod.normalizeGitHubRepo as (repoRaw: string) => string | null;
+
+  assert.equal(normalizeGitHubRepo("owner-only"), null);
+  assert.equal(normalizeGitHubRepo("https://example.com/owner/name"), null);
+  assert.equal(normalizeGitHubRepo("owner/name/extra"), null);
+});
