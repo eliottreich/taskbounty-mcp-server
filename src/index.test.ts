@@ -102,3 +102,39 @@ test("#16: autopilot_enable checks for missing repo before API call", () => {
     "repo validation (null check) must happen before the API call",
   );
 });
+
+// Issue #18: device-auth polling logic exists in exactly one place.
+test("#18: deviceLogin function exists and taskbounty_login handler delegates to it", () => {
+  const built = readFileSync(buildEntry, "utf8");
+  // The deviceLogin function should exist with instruction support.
+  assert.ok(
+    built.includes("async function deviceLogin"),
+    "deviceLogin function must exist in build",
+  );
+  assert.ok(
+    built.includes("instruction"),
+    "deviceLogin must include instruction text in output",
+  );
+  // The instruction should reference the approval URL and user code.
+  assert.ok(
+    built.includes("verification_uri_complete"),
+    "instruction must include verification_uri_complete",
+  );
+  assert.ok(
+    built.includes("user_code"),
+    "instruction must include user_code",
+  );
+  // taskbounty_login handler should delegate to deviceLogin.
+  assert.ok(
+    built.includes('return await deviceLogin(clientName)'),
+    "taskbounty_login handler must delegate to deviceLogin",
+  );
+  // The old duplicated polling code should no longer exist.
+  assert.ok(
+    !built.includes("Poll inline using the started session"),
+    "inline polling code should be removed",
+  );
+  // Verify only one polling loop pattern exists.
+  const pollCount = (built.match(/\/api\/mcp\/device\/token/g) || []).length;
+  assert.equal(pollCount, 1, "device/token poll call should exist exactly once");
+});
