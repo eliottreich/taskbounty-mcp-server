@@ -73,6 +73,7 @@ import {
   writeFileSync,
   existsSync,
 } from "node:fs";
+import { parseGitHubRepo, requireNonEmpty, toolError, type ToolResult } from "./validators.js";
 
 const API_BASE =
   process.env.TASKBOUNTY_API_BASE?.replace(/\/$/, "") ||
@@ -85,10 +86,6 @@ const SITE_ORIGIN = API_BASE.replace(/\/api\/v1\/?$/, "");
 const CRED_DIR = join(homedir(), ".taskbounty");
 const CRED_PATH = join(CRED_DIR, "credentials.json");
 
-type ToolResult = {
-  content: { type: "text"; text: string }[];
-  isError?: boolean;
-};
 
 function readStoredToken(): string {
   try {
@@ -756,29 +753,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           isError: true,
         };
       }
-      const repoRaw = String(a.repo ?? "").trim();
-      if (!repoRaw) {
-        return {
-          content: [{ type: "text", text: "repo is required (owner/name or a GitHub URL)" }],
-          isError: true,
-        };
-      }
-      // Normalize to owner/name.
-      const m = repoRaw.match(
-        /^(?:https?:\/\/github\.com\/)?([^/\s]+)\/([^/\s#?]+?)(?:\.git)?\/?$/i,
-      );
-      if (!m) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Could not parse repo "${repoRaw}". Use owner/name or a full GitHub URL.`,
-            },
-          ],
-          isError: true,
-        };
-      }
-      const repo = `${m[1]}/${m[2]}`;
+      const repoResult = parseGitHubRepo(a.repo);
+      if (!repoResult.ok) return repoResult.result;
+      const repo = repoResult.value;
       const triggerLabel =
         typeof a.trigger_label === "string" && a.trigger_label
           ? a.trigger_label
@@ -844,13 +821,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           isError: true,
         };
       }
-      const issueUrl = String(a.issue_url ?? "").trim();
-      if (!issueUrl) {
-        return {
-          content: [{ type: "text", text: "issue_url is required" }],
-          isError: true,
-        };
-      }
+      const issueUrlErr = requireNonEmpty(a.issue_url, "issue_url");
+      if (issueUrlErr) return issueUrlErr;
+      const issueUrl = String(a.issue_url).trim();
       const body: Record<string, unknown> = { issue_url: issueUrl };
       if (typeof a.bounty_usd === "number") body.bounty_usd = a.bounty_usd;
 
@@ -920,13 +893,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
 
     case "get_bounty_detail": {
-      const id = String(a.task_id_or_slug ?? "");
-      if (!id) {
-        return {
-          content: [{ type: "text", text: "task_id_or_slug is required" }],
-          isError: true,
-        };
-      }
+      const slugErr = requireNonEmpty(a.task_id_or_slug, "task_id_or_slug");
+      if (slugErr) return slugErr;
+      const id = String(a.task_id_or_slug).trim();
       return await tbFetch(`/tasks/${encodeURIComponent(id)}`);
     }
 
@@ -963,27 +932,18 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
 
     case "check_submission_status": {
-      const id = String(a.submission_id ?? "");
-      if (!id) {
-        return {
-          content: [{ type: "text", text: "submission_id is required" }],
-          isError: true,
-        };
-      }
+      const subErr = requireNonEmpty(a.submission_id, "submission_id");
+      if (subErr) return subErr;
+      const id = String(a.submission_id).trim();
       return await tbFetch(`/submissions/${encodeURIComponent(id)}`, {
         requireAuth: true,
       });
     }
 
     case "create_bounty_draft": {
-      const required = ["title", "short_summary", "description", "category", "bounty_amount", "submission_deadline"];
-      for (const key of required) {
-        if (a[key] === undefined || a[key] === null || a[key] === "") {
-          return {
-            content: [{ type: "text", text: `${key} is required` }],
-            isError: true,
-          };
-        }
+      for (const field of ["title", "short_summary", "description", "category", "bounty_amount", "submission_deadline"] as const) {
+        const err = requireNonEmpty(a[field], field);
+        if (err) return err;
       }
       const body: Record<string, unknown> = {
         title: a.title,
@@ -1007,13 +967,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
 
     case "fund_bounty": {
-      const taskId = String(a.task_id ?? "");
-      if (!taskId) {
-        return {
-          content: [{ type: "text", text: "task_id is required" }],
-          isError: true,
-        };
-      }
+      const fundErr = requireNonEmpty(a.task_id, "task_id");
+      if (fundErr) return fundErr;
+      const taskId = String(a.task_id).trim();
       return await tbFetch(`/tasks/${encodeURIComponent(taskId)}/checkout`, {
         method: "POST",
         body: JSON.stringify({}),
@@ -1033,33 +989,21 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
 
     case "get_bounty_submissions": {
-      const taskId = String(a.task_id ?? "");
-      if (!taskId) {
-        return {
-          content: [{ type: "text", text: "task_id is required" }],
-          isError: true,
-        };
-      }
+      const gbsErr = requireNonEmpty(a.task_id, "task_id");
+      if (gbsErr) return gbsErr;
+      const taskId = String(a.task_id).trim();
       return await tbFetch(`/tasks/${encodeURIComponent(taskId)}/submissions`, {
         requireAuth: true,
       });
     }
 
     case "award_bounty": {
-      const taskId = String(a.task_id ?? "");
-      const submissionId = String(a.submission_id ?? "");
-      if (!taskId) {
-        return {
-          content: [{ type: "text", text: "task_id is required" }],
-          isError: true,
-        };
-      }
-      if (!submissionId) {
-        return {
-          content: [{ type: "text", text: "submission_id is required" }],
-          isError: true,
-        };
-      }
+      const awardTaskErr = requireNonEmpty(a.task_id, "task_id");
+      if (awardTaskErr) return awardTaskErr;
+      const awardSubErr = requireNonEmpty(a.submission_id, "submission_id");
+      if (awardSubErr) return awardSubErr;
+      const taskId = String(a.task_id).trim();
+      const submissionId = String(a.submission_id).trim();
       return await tbFetch(`/tasks/${encodeURIComponent(taskId)}/award`, {
         method: "POST",
         body: JSON.stringify({ submission_id: submissionId }),
@@ -1068,13 +1012,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
 
     case "cancel_bounty": {
-      const taskId = String(a.task_id ?? "");
-      if (!taskId) {
-        return {
-          content: [{ type: "text", text: "task_id is required" }],
-          isError: true,
-        };
-      }
+      const cancelErr = requireNonEmpty(a.task_id, "task_id");
+      if (cancelErr) return cancelErr;
+      const taskId = String(a.task_id).trim();
       return await tbFetch(`/tasks/${encodeURIComponent(taskId)}/cancel`, {
         method: "POST",
         body: JSON.stringify({}),
