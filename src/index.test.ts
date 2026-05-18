@@ -1,11 +1,10 @@
-// Regression tests for issues #14 and #15.
-// Minimal and self-contained (see issue #16 for a full test harness).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { parseGitHubRepo } from "./tool-args.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const buildEntry = join(here, "..", "build", "index.js");
@@ -52,4 +51,32 @@ test("#15: submit_pr validates required args before building the request body", 
     caseBody.indexOf("is required") < caseBody.indexOf("const body"),
     "required-arg validation must run before the body is built",
   );
+});
+
+test("#16: repo normalizer accepts owner/name", () => {
+  assert.deepEqual(parseGitHubRepo("eliottreich/taskbounty-mcp-server"), {
+    ok: true,
+    repo: "eliottreich/taskbounty-mcp-server",
+  });
+});
+
+test("#16: repo normalizer accepts full GitHub URLs", () => {
+  assert.deepEqual(parseGitHubRepo("https://github.com/eliottreich/taskbounty-mcp-server"), {
+    ok: true,
+    repo: "eliottreich/taskbounty-mcp-server",
+  });
+});
+
+test("#16: repo normalizer accepts .git suffixes and trailing slashes", () => {
+  assert.deepEqual(parseGitHubRepo("https://github.com/eliottreich/taskbounty-mcp-server.git/"), {
+    ok: true,
+    repo: "eliottreich/taskbounty-mcp-server",
+  });
+});
+
+test("#16: repo normalizer rejects malformed input", () => {
+  assert.deepEqual(parseGitHubRepo("not a repo"), {
+    ok: false,
+    message: 'Could not parse repo "not a repo". Use owner/name or a full GitHub URL.',
+  });
 });

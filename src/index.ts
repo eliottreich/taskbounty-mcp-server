@@ -65,6 +65,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { parseGitHubRepo } from "./tool-args.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -756,29 +757,14 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           isError: true,
         };
       }
-      const repoRaw = String(a.repo ?? "").trim();
-      if (!repoRaw) {
+      const repoResult = parseGitHubRepo(a.repo);
+      if (!repoResult.ok) {
         return {
-          content: [{ type: "text", text: "repo is required (owner/name or a GitHub URL)" }],
+          content: [{ type: "text", text: repoResult.message }],
           isError: true,
         };
       }
-      // Normalize to owner/name.
-      const m = repoRaw.match(
-        /^(?:https?:\/\/github\.com\/)?([^/\s]+)\/([^/\s#?]+?)(?:\.git)?\/?$/i,
-      );
-      if (!m) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Could not parse repo "${repoRaw}". Use owner/name or a full GitHub URL.`,
-            },
-          ],
-          isError: true,
-        };
-      }
-      const repo = `${m[1]}/${m[2]}`;
+      const repo = repoResult.repo;
       const triggerLabel =
         typeof a.trigger_label === "string" && a.trigger_label
           ? a.trigger_label
