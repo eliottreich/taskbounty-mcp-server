@@ -32,6 +32,7 @@
   ],
   "scripts": {
     "build": "tsc && chmod +x build/index.js",
+    "test": "tsc && node --test test/*.test.mjs",
     "start": "node build/index.js",
     "test": "npm run build && tsc -p tsconfig.test.json && node --test \".test-build/**/*.test.js\"",
     "prepare": "npm run build"
