@@ -1,4 +1,4 @@
-// Regression tests for issues #14 and #15.
+// Regression tests for issues #14, #15, and #18.
 // Minimal and self-contained (see issue #16 for a full test harness).
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -51,5 +51,31 @@ test("#15: submit_pr validates required args before building the request body", 
   assert.ok(
     caseBody.indexOf("is required") < caseBody.indexOf("const body"),
     "required-arg validation must run before the body is built",
+  );
+});
+
+// Issue #18: taskbounty_login previously duplicated the device start/poll
+// state machine inline and only fell back to deviceLogin() after a failed
+// start call. Keep the auth flow centralized so future changes hit one path.
+test("#18: taskbounty_login delegates to the shared deviceLogin implementation", () => {
+  const built = readFileSync(buildEntry, "utf8");
+  const loginCaseStart = built.indexOf('case "taskbounty_login": {');
+  const nextCaseStart = built.indexOf('case "autopilot_enable": {');
+  assert.ok(loginCaseStart !== -1, "taskbounty_login case must exist");
+  assert.ok(nextCaseStart > loginCaseStart, "next tool case must follow taskbounty_login");
+
+  const loginCase = built.slice(loginCaseStart, nextCaseStart);
+  assert.match(loginCase, /return await deviceLogin\(clientName\)/);
+  assert.equal(
+    (built.match(/fetch\(`\$\{SITE_ORIGIN\}\/api\/mcp\/device\/start`/g) ?? [])
+      .length,
+    1,
+    "device start endpoint should be called from one implementation only",
+  );
+  assert.equal(
+    (built.match(/fetch\(`\$\{SITE_ORIGIN\}\/api\/mcp\/device\/token`/g) ?? [])
+      .length,
+    1,
+    "device token polling endpoint should be called from one implementation only",
   );
 });
