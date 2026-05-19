@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { normalizeGitHubRepo } from "./repo.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const buildEntry = join(here, "..", "build", "index.js");
@@ -52,4 +53,25 @@ test("#15: submit_pr validates required args before building the request body", 
     caseBody.indexOf("is required") < caseBody.indexOf("const body"),
     "required-arg validation must run before the body is built",
   );
+});
+
+test("#16: normalizes supported GitHub repo strings", () => {
+  assert.equal(normalizeGitHubRepo("owner/name"), "owner/name");
+  assert.equal(
+    normalizeGitHubRepo("https://github.com/owner/name"),
+    "owner/name",
+  );
+  assert.equal(
+    normalizeGitHubRepo("https://github.com/owner/name.git"),
+    "owner/name",
+  );
+  assert.equal(
+    normalizeGitHubRepo("https://github.com/owner/name/"),
+    "owner/name",
+  );
+});
+
+test("#16: rejects malformed GitHub repo strings", () => {
+  assert.equal(normalizeGitHubRepo("not-a-repo"), null);
+  assert.equal(normalizeGitHubRepo("https://gitlab.com/owner/name"), null);
 });
