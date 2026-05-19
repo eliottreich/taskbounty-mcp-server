@@ -73,6 +73,7 @@ import {
   writeFileSync,
   existsSync,
 } from "node:fs";
+import { pathToFileURL } from "node:url";
 
 const API_BASE =
   process.env.TASKBOUNTY_API_BASE?.replace(/\/$/, "") ||
@@ -89,6 +90,14 @@ type ToolResult = {
   content: { type: "text"; text: string }[];
   isError?: boolean;
 };
+
+export function normalizeGitHubRepo(repoRaw: string): string | null {
+  const repo = repoRaw.trim();
+  const m = repo.match(
+    /^(?:https?:\/\/github\.com\/)?([^/\s]+)\/([^/\s#?]+?)(?:\.git)?\/?$/i,
+  );
+  return m ? `${m[1]}/${m[2]}` : null;
+}
 
 function readStoredToken(): string {
   try {
@@ -602,8 +611,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: TOOLS as unknown as typeof TOOLS,
 }));
 
-server.setRequestHandler(CallToolRequestSchema, async (req) => {
-  const { name, arguments: args = {} } = req.params;
+server.setRequestHandler(CallToolRequestSchema, async (req) =>
+  handleToolCall(req.params.name, (req.params.arguments ?? {}) as Record<string, unknown>),
+);
+
+export async function handleToolCall(
+  name: string,
+  args: Record<string, unknown> = {},
+): Promise<ToolResult> {
   const a = args as Record<string, unknown>;
 
   switch (name) {
@@ -764,10 +779,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         };
       }
       // Normalize to owner/name.
-      const m = repoRaw.match(
-        /^(?:https?:\/\/github\.com\/)?([^/\s]+)\/([^/\s#?]+?)(?:\.git)?\/?$/i,
-      );
-      if (!m) {
+      const repo = normalizeGitHubRepo(repoRaw);
+      if (!repo) {
         return {
           content: [
             {
@@ -778,7 +791,6 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           isError: true,
         };
       }
-      const repo = `${m[1]}/${m[2]}`;
       const triggerLabel =
         typeof a.trigger_label === "string" && a.trigger_label
           ? a.trigger_label
@@ -1121,7 +1133,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         isError: true,
       };
   }
-});
+}
 
 async function main() {
   const transport = new StdioServerTransport();
@@ -1129,7 +1141,9 @@ async function main() {
   console.error("[taskbounty-mcp] ready on stdio");
 }
 
-main().catch((err) => {
-  console.error("[taskbounty-mcp] fatal", err);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error("[taskbounty-mcp] fatal", err);
+    process.exit(1);
+  });
+}
