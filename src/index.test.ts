@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -51,5 +51,34 @@ test("#15: submit_pr validates required args before building the request body", 
   assert.ok(
     caseBody.indexOf("is required") < caseBody.indexOf("const body"),
     "required-arg validation must run before the body is built",
+  );
+});
+
+test("#57: fetchWithTimeout aborts a never-resolving request", async () => {
+  const built = await import(pathToFileURL(buildEntry).href);
+  const fetchWithTimeout = built.fetchWithTimeout as (
+    url: string,
+    init: RequestInit,
+    timeoutMs: number,
+    fetchImpl: typeof fetch,
+  ) => Promise<Response>;
+
+  const neverResolvingFetch = ((_url: string | URL | Request, init?: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => {
+        const err = new Error("The operation was aborted");
+        err.name = "AbortError";
+        reject(err);
+      });
+    })) as typeof fetch;
+
+  const startedAt = Date.now();
+  await assert.rejects(
+    fetchWithTimeout("https://example.test/hang", {}, 20, neverResolvingFetch),
+    /Request to https:\/\/example\.test\/hang timed out after 20ms/,
+  );
+  assert.ok(
+    Date.now() - startedAt < 1000,
+    "timeout regression test must not hang waiting for real network",
   );
 });

@@ -67,6 +67,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   mkdirSync,
   readFileSync,
@@ -78,6 +79,7 @@ const API_BASE =
   process.env.TASKBOUNTY_API_BASE?.replace(/\/$/, "") ||
   "https://www.task-bounty.com/api/v1";
 const ENV_API_KEY = process.env.TASKBOUNTY_API_KEY || "";
+const DEFAULT_HTTP_TIMEOUT_MS = 30_000;
 
 // Site origin (no /api/v1 suffix). The device-auth endpoints live at /api/mcp/*.
 const SITE_ORIGIN = API_BASE.replace(/\/api\/v1\/?$/, "");
@@ -89,6 +91,50 @@ type ToolResult = {
   content: { type: "text"; text: string }[];
   isError?: boolean;
 };
+
+export class RequestTimeoutError extends Error {
+  constructor(
+    readonly url: string,
+    readonly timeoutMs: number,
+  ) {
+    super(`Request to ${url} timed out after ${timeoutMs}ms`);
+    this.name = "RequestTimeoutError";
+  }
+}
+
+function requestTimeoutMs(): number {
+  const parsed = Number.parseInt(
+    process.env.TASKBOUNTY_HTTP_TIMEOUT_MS ?? "",
+    10,
+  );
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_HTTP_TIMEOUT_MS;
+}
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && err.name === "AbortError";
+}
+
+export async function fetchWithTimeout(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs = requestTimeoutMs(),
+  fetchImpl: typeof fetch = fetch,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetchImpl(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (isAbortError(err)) {
+      throw new RequestTimeoutError(url, timeoutMs);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 function readStoredToken(): string {
   try {
@@ -153,7 +199,7 @@ async function tbFetch(
 
   let res: Response;
   try {
-    res = await fetch(url, { ...rest, headers: finalHeaders });
+    res = await fetchWithTimeout(url, { ...rest, headers: finalHeaders });
   } catch (err) {
     return {
       content: [
@@ -197,7 +243,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function deviceLogin(clientName: string): Promise<ToolResult> {
   let start: DeviceStart;
   try {
-    const res = await fetch(`${SITE_ORIGIN}/api/mcp/device/start`, {
+    const res = await fetchWithTimeout(`${SITE_ORIGIN}/api/mcp/device/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({ client_name: clientName }),
@@ -235,7 +281,7 @@ async function deviceLogin(clientName: string): Promise<ToolResult> {
     await sleep(intervalMs);
     let res: Response;
     try {
-      res = await fetch(`${SITE_ORIGIN}/api/mcp/device/token`, {
+      res = await fetchWithTimeout(`${SITE_ORIGIN}/api/mcp/device/token`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({ device_code: start.device_code }),
@@ -627,7 +673,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       // Kick off device flow and surface the approval instruction first.
       let start: DeviceStart | null = null;
       try {
-        const res = await fetch(`${SITE_ORIGIN}/api/mcp/device/start`, {
+        const res = await fetchWithTimeout(`${SITE_ORIGIN}/api/mcp/device/start`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -656,7 +702,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         await sleep(intervalMs);
         let res: Response;
         try {
-          res = await fetch(`${SITE_ORIGIN}/api/mcp/device/token`, {
+          res = await fetchWithTimeout(`${SITE_ORIGIN}/api/mcp/device/token`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -1129,7 +1175,9 @@ async function main() {
   console.error("[taskbounty-mcp] ready on stdio");
 }
 
-main().catch((err) => {
-  console.error("[taskbounty-mcp] fatal", err);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error("[taskbounty-mcp] fatal", err);
+    process.exit(1);
+  });
+}
