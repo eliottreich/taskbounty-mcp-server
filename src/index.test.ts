@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -52,4 +52,120 @@ test("#15: submit_pr validates required args before building the request body", 
     caseBody.indexOf("is required") < caseBody.indexOf("const body"),
     "required-arg validation must run before the body is built",
   );
+});
+
+type DeviceLogin = (
+  clientName: string,
+  overrides: {
+    fetch: typeof fetch;
+    sleep: (ms: number) => Promise<void>;
+    now: () => number;
+    persistToken: (accessToken: string, userId?: string) => void;
+    siteOrigin: string;
+    credPath: string;
+  },
+) => Promise<{ content: { type: "text"; text: string }[]; isError?: boolean }>;
+
+async function loadDeviceLogin(): Promise<DeviceLogin> {
+  const mod = (await import(pathToFileURL(buildEntry).href)) as {
+    deviceLogin: DeviceLogin;
+  };
+  return mod.deviceLogin;
+}
+
+const deviceStart = {
+  device_code: "device-123",
+  user_code: "ABCD-EFGH",
+  verification_uri: "https://www.task-bounty.com/device",
+  verification_uri_complete: "https://www.task-bounty.com/device?user_code=ABCD-EFGH",
+  expires_in: 60,
+  interval: 1,
+};
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+// Issue #18: the shared device-login implementation must handle the normal
+// OAuth device flow state machine without duplicating it in taskbounty_login.
+test("#18: deviceLogin polls authorization_pending then persists a successful token", async () => {
+  const deviceLogin = await loadDeviceLogin();
+  const calls: string[] = [];
+  const persisted: { token?: string; userId?: string } = {};
+  let tokenPolls = 0;
+
+  const result = await deviceLogin("test-client", {
+    fetch: async (input) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.endsWith("/api/mcp/device/start")) return jsonResponse(deviceStart);
+      tokenPolls += 1;
+      if (tokenPolls === 1) {
+        return jsonResponse({ error: "authorization_pending" }, 400);
+      }
+      return jsonResponse({
+        access_token: "tb_test_success",
+        taskbounty_user_id: "user-123",
+      });
+    },
+    sleep: async () => {},
+    now: () => 0,
+    persistToken: (accessToken, userId) => {
+      persisted.token = accessToken;
+      persisted.userId = userId;
+    },
+    siteOrigin: "https://www.task-bounty.com",
+    credPath: "/tmp/taskbounty-test-credentials.json",
+  });
+
+  assert.equal(result.isError, undefined);
+  assert.equal(persisted.token, "tb_test_success");
+  assert.equal(persisted.userId, "user-123");
+  assert.equal(calls.filter((url) => url.endsWith("/api/mcp/device/token")).length, 2);
+  const text = result.content[0]?.text ?? "";
+  assert.match(text, /https:\/\/www\.task-bounty\.com\/device\?user_code=ABCD-EFGH/);
+  assert.match(text, /Your code: ABCD-EFGH/);
+  assert.match(text, /Logged in/);
+});
+
+test("#18: deviceLogin returns a consistent instruction on expired_token", async () => {
+  const deviceLogin = await loadDeviceLogin();
+  let persisted = false;
+
+  const result = await deviceLogin("test-client", {
+    fetch: async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/mcp/device/start")) return jsonResponse(deviceStart);
+      return jsonResponse({ error: "expired_token" }, 400);
+    },
+    sleep: async () => {},
+    now: () => 0,
+    persistToken: () => {
+      persisted = true;
+    },
+    siteOrigin: "https://www.task-bounty.com",
+    credPath: "/tmp/taskbounty-test-credentials.json",
+  });
+
+  assert.equal(result.isError, true);
+  assert.equal(persisted, false);
+  const text = result.content[0]?.text ?? "";
+  assert.match(text, /https:\/\/www\.task-bounty\.com\/device\?user_code=ABCD-EFGH/);
+  assert.match(text, /Your code: ABCD-EFGH/);
+  assert.match(text, /Login code expired before approval/);
+});
+
+test("#18: taskbounty_login delegates to the single deviceLogin implementation", () => {
+  const built = readFileSync(buildEntry, "utf8");
+  const tokenEndpointUses = built.match(/\/api\/mcp\/device\/token/g) ?? [];
+  assert.equal(tokenEndpointUses.length, 1);
+
+  const caseStart = built.indexOf('case "taskbounty_login": {');
+  assert.ok(caseStart !== -1, "taskbounty_login case must exist");
+  const caseBody = built.slice(caseStart, caseStart + 900);
+  assert.match(caseBody, /return await deviceLogin\(clientName\)/);
+  assert.doesNotMatch(caseBody, /\/api\/mcp\/device\/token/);
 });
