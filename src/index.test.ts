@@ -12,6 +12,32 @@ const buildEntry = join(here, "..", "build", "index.js");
 const pkg = JSON.parse(
   readFileSync(join(here, "..", "package.json"), "utf8"),
 ) as { version: string };
+const lockfile = JSON.parse(
+  readFileSync(join(here, "..", "package-lock.json"), "utf8"),
+) as {
+  packages?: Record<string, { version?: string }>;
+};
+
+function lockfileVersion(packagePath: string): string {
+  const version = lockfile.packages?.[packagePath]?.version;
+  assert.ok(version, `${packagePath} must be present in package-lock.json`);
+  return version;
+}
+
+function assertVersionAtLeast(actual: string, minimum: string): void {
+  const actualParts = actual.split(".").map(Number);
+  const minimumParts = minimum.split(".").map(Number);
+
+  for (let index = 0; index < minimumParts.length; index += 1) {
+    const actualPart = actualParts[index] ?? 0;
+    const minimumPart = minimumParts[index] ?? 0;
+
+    if (actualPart > minimumPart) return;
+    if (actualPart < minimumPart) {
+      assert.fail(`expected ${actual} to be at least ${minimum}`);
+    }
+  }
+}
 
 // Issue #14: the server must advertise the real package version, not a
 // stale hardcoded one, and --version must agree with package.json.
@@ -52,4 +78,15 @@ test("#15: submit_pr validates required args before building the request body", 
     caseBody.indexOf("is required") < caseBody.indexOf("const body"),
     "required-arg validation must run before the body is built",
   );
+});
+
+// Issue #17: keep the audited transitive dependency fixes from regressing if
+// the lockfile is refreshed later.
+test("#17: lockfile keeps audited transitive dependencies patched", () => {
+  assertVersionAtLeast(lockfileVersion("node_modules/hono"), "4.12.19");
+  assertVersionAtLeast(
+    lockfileVersion("node_modules/express-rate-limit"),
+    "8.5.2",
+  );
+  assertVersionAtLeast(lockfileVersion("node_modules/ip-address"), "10.2.0");
 });
