@@ -4,6 +4,6 @@
     "outDir": "./.test-build",
     "noEmit": false
   },
-  "include": ["src/**/*.test.ts"],
+  "include": ["src/index.ts", "src/**/*.test.ts"],
   "exclude": ["node_modules", "build"]
 }
