@@ -194,44 +194,49 @@ type DeviceStart = {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function deviceLogin(clientName: string): Promise<ToolResult> {
+async function deviceLogin(
+  clientName: string,
+  existingStart?: DeviceStart,
+  instruction?: string,
+): Promise<ToolResult> {
   let start: DeviceStart;
-  try {
-    const res = await fetch(`${SITE_ORIGIN}/api/mcp/device/start`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ client_name: clientName }),
-    });
-    if (!res.ok) {
-      const t = await res.text();
+
+  if (existingStart) {
+    start = existingStart;
+  } else {
+    try {
+      const res = await fetch(`${SITE_ORIGIN}/api/mcp/device/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ client_name: clientName }),
+      });
+      if (!res.ok) {
+        const t = await res.text();
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Could not start login (HTTP ${res.status}) from ${SITE_ORIGIN}/api/mcp/device/start\n\n${t}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+      start = (await res.json()) as DeviceStart;
+    } catch (err) {
       return {
         content: [
           {
             type: "text",
-            text: `Could not start login (HTTP ${res.status}) from ${SITE_ORIGIN}/api/mcp/device/start\n\n${t}`,
+            text: `Network error starting login: ${err instanceof Error ? err.message : String(err)}`,
           },
         ],
         isError: true,
       };
     }
-    start = (await res.json()) as DeviceStart;
-  } catch (err) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Network error starting login: ${err instanceof Error ? err.message : String(err)}`,
-        },
-      ],
-      isError: true,
-    };
   }
 
-  const instruction =
-    `Open this URL in your browser and approve:\n  ${start.verification_uri_complete}\n` +
-    `Your code: ${start.user_code}\n` +
-    `(If the link does not prefill, go to ${start.verification_uri} and enter the code.)\n\n` +
-    `Waiting for approval...`;
+  const prefix = instruction ? instruction + "\n\n" : "";
 
   const deadline = Date.now() + start.expires_in * 1000;
   let intervalMs = Math.max(1, start.interval) * 1000;
@@ -246,9 +251,8 @@ async function deviceLogin(clientName: string): Promise<ToolResult> {
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({ device_code: start.device_code }),
       });
-    } catch (err) {
+    } catch {
       // transient network issue; keep polling until the deadline
-      void err;
       continue;
     }
 
@@ -265,7 +269,7 @@ async function deviceLogin(clientName: string): Promise<ToolResult> {
           content: [
             {
               type: "text",
-              text: `${instruction}\n\nLogin succeeded but could not write ${CRED_PATH}: ${err instanceof Error ? err.message : String(err)}. Set TASKBOUNTY_API_KEY=${data.access_token} in your environment instead.`,
+              text: `${prefix}Login succeeded but could not write ${CRED_PATH}: ${err instanceof Error ? err.message : String(err)}. Set TASKBOUNTY_API_KEY=${data.access_token} instead.`,
             },
           ],
           isError: true,
@@ -276,7 +280,7 @@ async function deviceLogin(clientName: string): Promise<ToolResult> {
           {
             type: "text",
             text:
-              `${instruction}\n\nLogged in. Credentials saved to ${CRED_PATH} (mode 0600).\n` +
+              `${prefix}Logged in. Credentials saved to ${CRED_PATH} (mode 0600).\n` +
               `For CI or headless use you can also set TASKBOUNTY_API_KEY=${data.access_token}.\n\n` +
               `You can now use autopilot_enable and post_from_issue.`,
           },
@@ -303,7 +307,7 @@ async function deviceLogin(clientName: string): Promise<ToolResult> {
           {
             type: "text",
             text:
-              `${instruction}\n\n` +
+              `${prefix}` +
               (errCode === "access_denied"
                 ? "Login was denied in the browser. Run taskbounty_login again to retry."
                 : "Login code expired before approval. Run taskbounty_login again to retry."),
@@ -317,7 +321,7 @@ async function deviceLogin(clientName: string): Promise<ToolResult> {
       content: [
         {
           type: "text",
-          text: `${instruction}\n\nLogin failed (HTTP ${res.status}, error="${errCode}"). Run taskbounty_login again to retry.`,
+          text: `${prefix}Login failed (HTTP ${res.status}, error="${errCode}"). Run taskbounty_login again to retry.`,
         },
       ],
       isError: true,
@@ -328,7 +332,7 @@ async function deviceLogin(clientName: string): Promise<ToolResult> {
     content: [
       {
         type: "text",
-        text: `${instruction}\n\nLogin timed out waiting for browser approval. Run taskbounty_login again to retry.`,
+        text: `${prefix}Login timed out waiting for browser approval. Run taskbounty_login again to retry.`,
       },
     ],
     isError: true,
@@ -630,8 +634,32 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           ? a.client_name
           : "taskbounty-mcp-server";
 
-      // Delegate to the single deviceLogin implementation.
-      return await deviceLogin(clientName);
+      // Kick off device flow and surface the approval instruction first.
+      let start: DeviceStart | null = null;
+      try {
+        const res = await fetch(`${SITE_ORIGIN}/api/mcp/device/start`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({ client_name: clientName }),
+        });
+        if (res.ok) start = (await res.json()) as DeviceStart;
+      } catch {
+        start = null;
+      }
+      if (!start) {
+        return await deviceLogin(clientName);
+      }
+
+      const instruction =
+        `Open this URL in your browser and approve:\n  ${start.verification_uri_complete}\n` +
+        `Your code: ${start.user_code}\n` +
+        `(If the link does not prefill, go to ${start.verification_uri} and enter the code.)\n\n` +
+        `Waiting for approval...`;
+
+      return await deviceLogin(clientName, start, instruction);
     }
 
     case "autopilot_enable": {
