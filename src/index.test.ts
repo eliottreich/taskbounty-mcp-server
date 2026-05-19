@@ -1,4 +1,4 @@
-// Regression tests for issues #14 and #15.
+// Regression tests for issues #14, #15, and #18.
 // Minimal and self-contained (see issue #16 for a full test harness).
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -51,5 +51,45 @@ test("#15: submit_pr validates required args before building the request body", 
   assert.ok(
     caseBody.indexOf("is required") < caseBody.indexOf("const body"),
     "required-arg validation must run before the body is built",
+  );
+});
+
+// Issue #18: device-auth polling logic must exist in exactly one place.
+// The taskbounty_login handler must delegate to deviceLogin() instead of
+// duplicating the poll state machine inline.
+test("#18: device-auth polling logic is not duplicated in taskbounty_login handler", () => {
+  const built = readFileSync(buildEntry, "utf8");
+
+  // The handler must call deviceLogin with the optional start + instruction params
+  // instead of having its own inline poll loop.
+  const caseStart = built.indexOf('case "taskbounty_login": {');
+  assert.ok(caseStart !== -1, "taskbounty_login case must exist");
+  const caseBody = built.slice(caseStart, caseStart + 1200);
+
+  // Must delegate to deviceLogin with the (clientName, start, instruction) signature.
+  assert.match(
+    caseBody,
+    /return await deviceLogin\(clientName,\s*start,\s*instruction\)/,
+    "taskbounty_login must delegate to deviceLogin(start, instruction)",
+  );
+
+  // Must NOT have an inline while/await-sleep poll loop.
+  assert.ok(
+    !caseBody.includes("while (Date.now() < deadline)"),
+    "taskbounty_login must not contain an inline poll loop",
+  );
+
+  // deviceLogin must accept the optional start and instruction parameters.
+  assert.match(
+    built,
+    /async function deviceLogin\(\s*\n\s+clientName:\s*string,\s*\n\s+start\?:/,
+    "deviceLogin must accept optional start parameter",
+  );
+
+  // deviceLogin must build a default instruction when none is provided.
+  assert.match(
+    built,
+    /approvalInstruction\s*=/,
+    "deviceLogin must build a default approval instruction",
   );
 });
