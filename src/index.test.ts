@@ -9,6 +9,7 @@ import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const buildEntry = join(here, "..", "build", "index.js");
+const sourceEntry = join(here, "..", "src", "index.ts");
 const pkg = JSON.parse(
   readFileSync(join(here, "..", "package.json"), "utf8"),
 ) as { version: string };
@@ -52,4 +53,22 @@ test("#15: submit_pr validates required args before building the request body", 
     caseBody.indexOf("is required") < caseBody.indexOf("const body"),
     "required-arg validation must run before the body is built",
   );
+});
+
+// Issue #18: taskbounty_login used to start device auth inline, then fall back
+// to deviceLogin(), which repeated the same start call and duplicated polling.
+test("#18: device login uses a single shared start and polling path", () => {
+  const source = readFileSync(sourceEntry, "utf8");
+  assert.equal(
+    source.split("fetch(`${SITE_ORIGIN}/api/mcp/device/start").length - 1,
+    1,
+    "device auth should start in exactly one shared helper",
+  );
+  assert.equal(
+    source.split("fetch(`${SITE_ORIGIN}/api/mcp/device/token").length - 1,
+    1,
+    "device auth should poll tokens in exactly one shared helper",
+  );
+  assert.match(source, /return pollDeviceLogin\(start, deviceLoginInstruction\(start\)\)/);
+  assert.doesNotMatch(source, /return await deviceLogin\(clientName\)/);
 });

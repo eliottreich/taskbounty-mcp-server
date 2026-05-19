@@ -194,8 +194,24 @@ type DeviceStart = {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function deviceLogin(clientName: string): Promise<ToolResult> {
-  let start: DeviceStart;
+function isToolResult(value: DeviceStart | ToolResult): value is ToolResult {
+  return Array.isArray((value as ToolResult).content);
+}
+
+function deviceLoginInstruction(start: DeviceStart): string {
+  return (
+    `Open this URL in your browser and approve:\n  ${start.verification_uri_complete}\n` +
+    `Your code: ${start.user_code}\n` +
+    `(If the link does not prefill, go to ${start.verification_uri} and enter the code.)\n\n` +
+    `Waiting for approval...`
+  );
+}
+
+function appendInstruction(instruction: string, message: string): string {
+  return instruction ? `${instruction}\n\n${message}` : message;
+}
+
+async function startDeviceLogin(clientName: string): Promise<DeviceStart | ToolResult> {
   try {
     const res = await fetch(`${SITE_ORIGIN}/api/mcp/device/start`, {
       method: "POST",
@@ -214,7 +230,7 @@ async function deviceLogin(clientName: string): Promise<ToolResult> {
         isError: true,
       };
     }
-    start = (await res.json()) as DeviceStart;
+    return (await res.json()) as DeviceStart;
   } catch (err) {
     return {
       content: [
@@ -226,7 +242,12 @@ async function deviceLogin(clientName: string): Promise<ToolResult> {
       isError: true,
     };
   }
+}
 
+async function pollDeviceLogin(
+  start: DeviceStart,
+  instruction = "",
+): Promise<ToolResult> {
   const deadline = Date.now() + start.expires_in * 1000;
   let intervalMs = Math.max(1, start.interval) * 1000;
 
@@ -259,7 +280,10 @@ async function deviceLogin(clientName: string): Promise<ToolResult> {
           content: [
             {
               type: "text",
-              text: `Login succeeded but could not write ${CRED_PATH}: ${err instanceof Error ? err.message : String(err)}. Set TASKBOUNTY_API_KEY=${data.access_token} in your environment instead.`,
+              text: appendInstruction(
+                instruction,
+                `Login succeeded but could not write ${CRED_PATH}: ${err instanceof Error ? err.message : String(err)}. Set TASKBOUNTY_API_KEY=${data.access_token} in your environment instead.`,
+              ),
             },
           ],
           isError: true,
@@ -269,11 +293,13 @@ async function deviceLogin(clientName: string): Promise<ToolResult> {
         content: [
           {
             type: "text",
-            text:
+            text: appendInstruction(
+              instruction,
               `Logged in. Credentials saved to ${CRED_PATH} (mode 0600).\n` +
-              `For CI or headless use, you can also set the env var:\n` +
-              `  TASKBOUNTY_API_KEY=${data.access_token}\n\n` +
-              `You can now use creator tools like autopilot_enable and post_from_issue.`,
+                `For CI or headless use, you can also set the env var:\n` +
+                `  TASKBOUNTY_API_KEY=${data.access_token}\n\n` +
+                `You can now use creator tools like autopilot_enable and post_from_issue.`,
+            ),
           },
         ],
       };
@@ -297,10 +323,12 @@ async function deviceLogin(clientName: string): Promise<ToolResult> {
         content: [
           {
             type: "text",
-            text:
+            text: appendInstruction(
+              instruction,
               errCode === "access_denied"
                 ? "Login was denied in the browser. Run taskbounty_login again to retry."
                 : "Login code expired before approval. Run taskbounty_login again to retry.",
+            ),
           },
         ],
         isError: true,
@@ -311,7 +339,10 @@ async function deviceLogin(clientName: string): Promise<ToolResult> {
       content: [
         {
           type: "text",
-          text: `Login failed (HTTP ${res.status}, error="${errCode}"). Run taskbounty_login again to retry.`,
+          text: appendInstruction(
+            instruction,
+            `Login failed (HTTP ${res.status}, error="${errCode}"). Run taskbounty_login again to retry.`,
+          ),
         },
       ],
       isError: true,
@@ -322,11 +353,20 @@ async function deviceLogin(clientName: string): Promise<ToolResult> {
     content: [
       {
         type: "text",
-        text: "Login timed out waiting for browser approval. Run taskbounty_login again to retry.",
+        text: appendInstruction(
+          instruction,
+          "Login timed out waiting for browser approval. Run taskbounty_login again to retry.",
+        ),
       },
     ],
     isError: true,
   };
+}
+
+async function deviceLogin(clientName: string): Promise<ToolResult> {
+  const start = await startDeviceLogin(clientName);
+  if (isToolResult(start)) return start;
+  return pollDeviceLogin(start);
 }
 
 const TOOLS = [
@@ -624,124 +664,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           ? a.client_name
           : "taskbounty-mcp-server";
 
-      // Kick off device flow and surface the approval instruction first.
-      let start: DeviceStart | null = null;
-      try {
-        const res = await fetch(`${SITE_ORIGIN}/api/mcp/device/start`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          body: JSON.stringify({ client_name: clientName }),
-        });
-        if (res.ok) start = (await res.json()) as DeviceStart;
-      } catch {
-        start = null;
-      }
-      if (!start) {
-        return await deviceLogin(clientName);
-      }
-
-      // Poll inline using the started session.
-      const deadline = Date.now() + start.expires_in * 1000;
-      let intervalMs = Math.max(1, start.interval) * 1000;
-      const instruction =
-        `Open this URL in your browser and approve:\n  ${start.verification_uri_complete}\n` +
-        `Your code: ${start.user_code}\n` +
-        `(If the link does not prefill, go to ${start.verification_uri} and enter the code.)\n\n` +
-        `Waiting for approval...`;
-
-      while (Date.now() < deadline) {
-        await sleep(intervalMs);
-        let res: Response;
-        try {
-          res = await fetch(`${SITE_ORIGIN}/api/mcp/device/token`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Accept: "application/json",
-            },
-            body: JSON.stringify({ device_code: start.device_code }),
-          });
-        } catch {
-          continue;
-        }
-        if (res.ok) {
-          const data = (await res.json()) as {
-            access_token: string;
-            taskbounty_user_id?: string;
-          };
-          try {
-            persistToken(data.access_token, data.taskbounty_user_id);
-          } catch (err) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `${instruction}\n\nLogin succeeded but could not write ${CRED_PATH}: ${err instanceof Error ? err.message : String(err)}. Set TASKBOUNTY_API_KEY=${data.access_token} instead.`,
-                },
-              ],
-              isError: true,
-            };
-          }
-          return {
-            content: [
-              {
-                type: "text",
-                text:
-                  `${instruction}\n\nLogged in. Credentials saved to ${CRED_PATH} (mode 0600).\n` +
-                  `For CI or headless use you can also set TASKBOUNTY_API_KEY=${data.access_token}.\n\n` +
-                  `You can now use autopilot_enable and post_from_issue.`,
-              },
-            ],
-          };
-        }
-        let errCode = "";
-        try {
-          errCode = ((await res.json()) as { error?: string }).error ?? "";
-        } catch {
-          errCode = "";
-        }
-        if (errCode === "authorization_pending") continue;
-        if (errCode === "slow_down") {
-          intervalMs += 5000;
-          continue;
-        }
-        if (errCode === "expired_token" || errCode === "access_denied") {
-          return {
-            content: [
-              {
-                type: "text",
-                text:
-                  `${instruction}\n\n` +
-                  (errCode === "access_denied"
-                    ? "Login was denied in the browser. Run taskbounty_login again to retry."
-                    : "Login code expired before approval. Run taskbounty_login again to retry."),
-              },
-            ],
-            isError: true,
-          };
-        }
-        return {
-          content: [
-            {
-              type: "text",
-              text: `${instruction}\n\nLogin failed (HTTP ${res.status}, error="${errCode}"). Run taskbounty_login again to retry.`,
-            },
-          ],
-          isError: true,
-        };
-      }
-      return {
-        content: [
-          {
-            type: "text",
-            text: `${instruction}\n\nLogin timed out waiting for browser approval. Run taskbounty_login again to retry.`,
-          },
-        ],
-        isError: true,
-      };
+      const start = await startDeviceLogin(clientName);
+      if (isToolResult(start)) return start;
+      return pollDeviceLogin(start, deviceLoginInstruction(start));
     }
 
     case "autopilot_enable": {
