@@ -1,11 +1,11 @@
-// Regression tests for issues #14 and #15.
-// Minimal and self-contained (see issue #16 for a full test harness).
+// Regression tests for issues #14, #15, and #16.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { normalizeGitHubRepo } from "./repo.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const buildEntry = join(here, "..", "build", "index.js");
@@ -51,5 +51,37 @@ test("#15: submit_pr validates required args before building the request body", 
   assert.ok(
     caseBody.indexOf("is required") < caseBody.indexOf("const body"),
     "required-arg validation must run before the body is built",
+  );
+});
+
+test("#16: repo-string normalizer accepts common GitHub repo forms", () => {
+  assert.equal(
+    normalizeGitHubRepo("eliottreich/taskbounty-mcp-server"),
+    "eliottreich/taskbounty-mcp-server",
+  );
+  assert.equal(
+    normalizeGitHubRepo("https://github.com/eliottreich/taskbounty-mcp-server"),
+    "eliottreich/taskbounty-mcp-server",
+  );
+  assert.equal(
+    normalizeGitHubRepo("https://github.com/eliottreich/taskbounty-mcp-server.git"),
+    "eliottreich/taskbounty-mcp-server",
+  );
+  assert.equal(
+    normalizeGitHubRepo("https://github.com/eliottreich/taskbounty-mcp-server/"),
+    "eliottreich/taskbounty-mcp-server",
+  );
+});
+
+test("#16: repo-string normalizer rejects malformed inputs", () => {
+  assert.equal(normalizeGitHubRepo(""), null);
+  assert.equal(normalizeGitHubRepo("eliottreich"), null);
+  assert.equal(
+    normalizeGitHubRepo("https://github.com/eliottreich/taskbounty-mcp-server/issues/16"),
+    null,
+  );
+  assert.equal(
+    normalizeGitHubRepo("https://gitlab.com/eliottreich/taskbounty-mcp-server"),
+    null,
   );
 });

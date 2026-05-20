@@ -73,6 +73,7 @@ import {
   writeFileSync,
   existsSync,
 } from "node:fs";
+import { normalizeGitHubRepo } from "./repo.js";
 
 const API_BASE =
   process.env.TASKBOUNTY_API_BASE?.replace(/\/$/, "") ||
@@ -763,11 +764,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           isError: true,
         };
       }
-      // Normalize to owner/name.
-      const m = repoRaw.match(
-        /^(?:https?:\/\/github\.com\/)?([^/\s]+)\/([^/\s#?]+?)(?:\.git)?\/?$/i,
-      );
-      if (!m) {
+      const repo = normalizeGitHubRepo(repoRaw);
+      if (!repo) {
         return {
           content: [
             {
@@ -778,7 +776,6 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           isError: true,
         };
       }
-      const repo = `${m[1]}/${m[2]}`;
       const triggerLabel =
         typeof a.trigger_label === "string" && a.trigger_label
           ? a.trigger_label
