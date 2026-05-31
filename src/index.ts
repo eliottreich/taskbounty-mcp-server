@@ -74,7 +74,14 @@ import {
   writeFileSync,
   existsSync,
 } from "node:fs";
-import { parseGitHubRepo, type ToolResult } from "./tool-helpers.js";
+import {
+  parseGitHubRepo,
+  parseUpstreamIssueReference,
+  summarizeTaskCompetition,
+  unknownTaskCompetition,
+  type TaskCompetitionState,
+  type ToolResult,
+} from "./tool-helpers.js";
 
 const API_BASE =
   process.env.TASKBOUNTY_API_BASE?.replace(/\/$/, "") ||
@@ -221,6 +228,65 @@ async function tbFetch(
     };
   }
   return { content: [{ type: "text", text }] };
+}
+
+async function fetchGitHubIssueComments(
+  repo: string,
+  number: number,
+): Promise<string[]> {
+  const url = `https://api.github.com/repos/${repo}/issues/${number}/comments?per_page=100`;
+  const res = await fetchWithTimeout(url, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      "User-Agent": "taskbounty-mcp-server",
+    },
+  });
+  if (!res.ok) throw new Error(`GitHub comments HTTP ${res.status}`);
+  const comments = (await res.json()) as { body?: unknown }[];
+  return comments.map((comment) => String(comment.body ?? ""));
+}
+
+async function addSolverHygieneSignals(rawJson: string): Promise<string> {
+  const feed = JSON.parse(rawJson) as {
+    items?: Array<Record<string, unknown>>;
+  };
+  if (!Array.isArray(feed.items)) return rawJson;
+
+  feed.items = await Promise.all(
+    feed.items.map(async (item) => {
+      const title = String(item.title ?? "");
+      const text = String(item.content_text ?? item.summary ?? "");
+      const taskUrl = typeof item.url === "string" ? item.url : undefined;
+      const upstream = parseUpstreamIssueReference(title, text, taskUrl);
+      let solverHygiene: TaskCompetitionState;
+
+      if (!upstream) {
+        solverHygiene = unknownTaskCompetition(
+          "Could not infer an upstream GitHub issue from the task payload; inspect the task before attempting.",
+        );
+      } else {
+        try {
+          const comments = await fetchGitHubIssueComments(
+            upstream.repo,
+            upstream.number,
+          );
+          solverHygiene = summarizeTaskCompetition(
+            comments,
+            upstream.issueUrl,
+          );
+        } catch (err) {
+          solverHygiene = unknownTaskCompetition(
+            `Could not inspect upstream comments for ${upstream.issueUrl}: ${err instanceof Error ? err.message : String(err)}.`,
+          );
+          solverHygiene.upstreamIssueUrl = upstream.issueUrl;
+        }
+      }
+
+      return { ...item, _solver_hygiene: solverHygiene };
+    }),
+  );
+
+  return JSON.stringify(feed, null, 2);
 }
 
 // --- Device-auth client (browser bootstrap for unauthenticated users) ---
@@ -853,7 +919,22 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       if (typeof a.language === "string") params.set("language", a.language);
       if (typeof a.limit === "number") params.set("limit", String(a.limit));
       const qs = params.toString();
-      return await tbFetch(`/bounties.json${qs ? `?${qs}` : ""}`);
+      const result = await tbFetch(`/bounties.json${qs ? `?${qs}` : ""}`);
+      if (result.isError) return result;
+      try {
+        return {
+          content: [
+            {
+              type: "text",
+              text: await addSolverHygieneSignals(
+                result.content[0]?.text ?? "{}",
+              ),
+            },
+          ],
+        };
+      } catch {
+        return result;
+      }
     }
 
     case "get_bounty_detail": {
