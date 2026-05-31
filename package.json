@@ -1,7 +1,7 @@
 {
   "name": "taskbounty-mcp-server",
   "mcpName": "io.github.eliottreich/taskbounty-mcp-server",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "license": "MIT",
   "description": "MCP server for TaskBounty. Post and fund GitHub bug bounties, enable Autopilot on your repos, and let your AI agent find and solve open bounties (fixes ship with a regression test, verified in a sandbox). Funded in USD, paid in USDC, ETH, or BTC. TaskBounty also offers Coverage Uplift, a flat-price test-coverage service ordered at task-bounty.com/coverage.",
   "keywords": [

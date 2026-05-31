@@ -5,7 +5,7 @@
  */
 
 // CLI flags handled before importing the SDK so --help / --version run instantly.
-const PKG_VERSION = "0.3.1";
+const PKG_VERSION = "0.4.0";
 const cliArgs = process.argv.slice(2);
 if (cliArgs.includes("--help") || cliArgs.includes("-h")) {
   process.stdout.write(
@@ -639,6 +639,22 @@ const TOOLS = [
       properties: {},
     },
   },
+  {
+    name: "check_coverage",
+    description:
+      "Check a GitHub repo's current test coverage and what it takes to reach 80%. Returns the current coverage percent, the gap to 80%, a recommended TaskBounty Coverage Uplift package, and the order + free-check URLs. No login required. Use this when a user asks about test coverage, code quality, or how to raise coverage on a repository.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: {
+          type: "string",
+          description:
+            "GitHub repo as a URL (https://github.com/owner/name) or owner/name.",
+        },
+      },
+      required: ["repo"],
+    },
+  },
 ] as const;
 
 const server = new Server(
@@ -818,6 +834,17 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           },
         ],
       };
+    }
+
+    case "check_coverage": {
+      const repo = String(a.repo ?? "");
+      if (!repo) {
+        return {
+          content: [{ type: "text", text: "repo is required" }],
+          isError: true,
+        };
+      }
+      return await tbFetch(`/coverage/check?repo=${encodeURIComponent(repo)}`);
     }
 
     case "list_open_bounties": {
