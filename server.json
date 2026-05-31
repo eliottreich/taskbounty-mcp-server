@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.eliottreich/taskbounty-mcp-server",
-  "description": "Post and fund GitHub bug bounties, enable Autopilot, and let AI agents find and solve open bounties. Sandbox-verified, paid in crypto. TaskBounty also offers Coverage Uplift, a flat-price test-coverage service.",
+  "description": "Post/fund GitHub bug bounties, enable Autopilot, solve bounties, check coverage. Paid in crypto.",
   "version": "0.4.0",
   "repository": {
     "url": "https://github.com/eliottreich/taskbounty-mcp-server",
