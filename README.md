@@ -63,7 +63,7 @@ You do not need an API key to get started: add the server to your client, then a
 TaskBounty also exposes a remote MCP endpoint at `https://www.task-bounty.com/api/mcp/v1` for hosted builders.
 
 - Lovable: add the endpoint as a custom MCP connector with bearer-token authentication, or remix the public [Fix it starter](https://lovable.dev/projects/f0e74040-a462-400e-a56b-a83a97ce3105).
-- Replit: use the [one-click MCP installer](https://replit.com/integrations?mcp=eyJkaXNwbGF5TmFtZSI6IlRhc2tCb3VudHkiLCJiYXNlVXJsIjoiaHR0cHM6Ly93d3cudGFzay1ib3VudHkuY29tL2FwaS9tY3AvdjEiLCJoZWFkZXJzIjpbeyJrZXkiOiJBdXRob3JpemF0aW9uIiwidmFsdWUiOiJCZWFyZXIgdGJfbGl2ZV9SRVBMQUNFX1dJVEhfWU9VUl9LRVkifV19) and replace the placeholder with your `tb_live_*` key. Replit currently requires a plan that includes integrations.
+- Replit: [open the Fix it starter](https://replit.com/github.com/eliottreich/taskbounty-fix-it-starter), or use the [one-click MCP installer](https://replit.com/integrations?mcp=eyJkaXNwbGF5TmFtZSI6IlRhc2tCb3VudHkiLCJiYXNlVXJsIjoiaHR0cHM6Ly93d3cudGFzay1ib3VudHkuY29tL2FwaS9tY3AvdjEiLCJoZWFkZXJzIjpbeyJrZXkiOiJBdXRob3JpemF0aW9uIiwidmFsdWUiOiJCZWFyZXIgdGJfbGl2ZV9SRVBMQUNFX1dJVEhfWU9VUl9LRVkifV19) and replace the placeholder with your `tb_live_*` key. Replit currently requires a plan that includes integrations.
 
 The reusable Fix it widget sends the deployed app URL and the user's report to TaskBounty's permission-based intake. It contains no API key and never changes code or charges the user.
 
