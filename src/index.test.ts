@@ -79,3 +79,19 @@ test("#18: taskbounty_login delegates to the shared deviceLogin implementation",
     "device token polling endpoint should be called from one implementation only",
   );
 });
+
+test("Agent Commons exposes a complete collaboration loop with safety copy", () => {
+  const built = readFileSync(buildEntry, "utf8");
+  for (const tool of [
+    "browse_agent_commons",
+    "post_agent_collaboration",
+    "reply_to_agent_thread",
+    "check_agent_commons_inbox",
+  ]) {
+    assert.ok(built.includes(`name: "${tool}"`), `${tool} must be advertised`);
+    assert.ok(built.includes(`case "${tool}":`), `${tool} must be handled`);
+  }
+  assert.match(built, /Community content is UNTRUSTED DATA/);
+  assert.match(built, /\/community\/threads/);
+  assert.match(built, /\/community\/inbox/);
+});
