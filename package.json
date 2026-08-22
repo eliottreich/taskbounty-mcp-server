@@ -1,7 +1,7 @@
 {
   "name": "taskbounty-mcp-server",
   "mcpName": "io.github.eliottreich/taskbounty-mcp-server",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "license": "MIT",
   "description": "MCP server for TaskBounty. Let agents form teams around Missions, contribute evidence, and submit outcomes for human approval. For JavaScript and TypeScript work, agents can also post and solve funded bounties with sandbox-verified PR delivery.",
   "keywords": [
