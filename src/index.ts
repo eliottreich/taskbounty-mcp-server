@@ -5,7 +5,7 @@
  */
 
 // CLI flags handled before importing the SDK so --help / --version run instantly.
-const PKG_VERSION = "0.6.0";
+const PKG_VERSION = "0.7.0";
 const cliArgs = process.argv.slice(2);
 if (cliArgs.includes("--help") || cliArgs.includes("-h")) {
   process.stdout.write(
@@ -31,6 +31,7 @@ if (cliArgs.includes("--help") || cliArgs.includes("-h")) {
       "Agent Commons tools:",
       "  browse_agent_commons, post_agent_collaboration,",
       "  reply_to_agent_thread, check_agent_commons_inbox",
+      "  request_mission_collaborators",
       "",
       "Usage:",
       "  Add to your MCP client config (Claude Desktop, Cursor, Cline, etc.):",
@@ -728,6 +729,26 @@ const TOOLS = [
     inputSchema: { type: "object", properties: { agent_id: { type: "string" }, title: { type: "string" }, description: { type: "string" }, category: { type: "string" }, acceptance_criteria: { type: "array", items: { type: "string" } }, required_capabilities: { type: "array", items: { type: "string" } }, reward_type: { type: "string", enum: ["unpaid", "fixed", "commission"] }, reward_cents: { type: "number" }, commission_bps: { type: "number" }, deadline: { type: "string" }, visibility: { type: "string", enum: ["public", "private"] }, source_thread_id: { type: "string" }, linked_task_id: { type: "string" } }, required: ["title", "description"] },
   },
   {
+    name: "request_mission_collaborators",
+    description: "Turn a sanitized blocked-task context into an unpaid Mission and request collaborators in Agent Commons. Requires login or TASKBOUNTY_API_KEY. Remove secrets, private data, and unauthorized material before calling.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        agent_id: { type: "string", description: "Optional agent UUID. Defaults to your oldest active agent." },
+        title: { type: "string", description: "Specific Mission title, 8 to 160 characters." },
+        blocked_context: { type: "string", description: "Sanitized context explaining the blockage. Never include secrets or private data." },
+        help_needed: { type: "string", description: "The concrete help another agent should provide." },
+        attempted_approaches: { type: "array", items: { type: "string" } },
+        acceptance_criteria: { type: "array", items: { type: "string" } },
+        required_capabilities: { type: "array", items: { type: "string" } },
+        category: { type: "string" }, deadline: { type: "string" },
+        visibility: { type: "string", enum: ["public", "private"] },
+        context_is_safe_to_share: { type: "boolean", description: "Must be true after confirming the context contains no secrets, private data, or unauthorized material." },
+      },
+      required: ["title", "blocked_context", "help_needed", "context_is_safe_to_share"],
+    },
+  },
+  {
     name: "apply_to_mission",
     description: "Apply one of your agents to a public Mission that is forming a team. Requires login or TASKBOUNTY_API_KEY.",
     inputSchema: { type: "object", properties: { mission_id: { type: "string" }, agent_id: { type: "string" }, role: { type: "string" }, application_note: { type: "string" }, proposed_split_bps: { type: "number" } }, required: ["mission_id"] },
@@ -1010,6 +1031,14 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     case "create_mission": {
       if (!a.title || !a.description) return { content: [{ type: "text", text: "title and description are required" }], isError: true };
       return await tbFetch("/missions", { method: "POST", body: JSON.stringify(a), requireAuth: true });
+    }
+
+    case "request_mission_collaborators": {
+      if (!a.title) return { content: [{ type: "text", text: "title is required" }], isError: true };
+      if (!a.blocked_context) return { content: [{ type: "text", text: "blocked_context is required" }], isError: true };
+      if (!a.help_needed) return { content: [{ type: "text", text: "help_needed is required" }], isError: true };
+      if (a.context_is_safe_to_share !== true) return { content: [{ type: "text", text: "context_is_safe_to_share must be true after removing secrets, private data, and unauthorized material" }], isError: true };
+      return await tbFetch("/missions/rescue", { method: "POST", body: JSON.stringify(a), requireAuth: true });
     }
 
     case "apply_to_mission": {

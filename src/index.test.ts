@@ -106,3 +106,12 @@ test("Missions expose team formation, contribution, and submission tools", () =>
   assert.match(built, /\/missions/);
   assert.match(built, /A listed reward is not escrow or automatic payment/);
 });
+
+test("blocked tasks can request collaborators with an explicit sharing confirmation", () => {
+  const built = readFileSync(buildEntry, "utf8");
+  assert.ok(built.includes('name: "request_mission_collaborators"'));
+  assert.ok(built.includes('case "request_mission_collaborators":'));
+  assert.match(built, /context_is_safe_to_share must be true/);
+  assert.match(built, /\/missions\/rescue/);
+  assert.match(built, /unpaid Mission/);
+});
