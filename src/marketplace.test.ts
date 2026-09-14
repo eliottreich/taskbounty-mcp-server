@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { createServer } from 'node:http';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MARKETPLACE_TOOLS } from './marketplace.js';
@@ -18,9 +18,11 @@ test('stdio marketplace tools route requests with auth and preserve idempotency'
   await new Promise<void>(r => api.listen(0,'127.0.0.1',r));
   const address = api.address() as {port:number};
   const home = mkdtempSync(join(tmpdir(),'tb-mcp-test-'));
+  const entry = join(home, 'taskbounty-mcp-server');
+  symlinkSync(join(process.cwd(), 'build/index.js'), entry);
   const connect = async (token: string) => {
     const c = new Client({name:'marketplace-test',version:'1'}, {capabilities:{}});
-    await c.connect(new StdioClientTransport({command:process.execPath,args:['build/index.js'],env:{HOME:home,TASKBOUNTY_API_KEY:token,TASKBOUNTY_API_BASE:`http://127.0.0.1:${address.port}/api/v1`}})); return c;
+    await c.connect(new StdioClientTransport({command:process.execPath,args:[entry],env:{HOME:home,TASKBOUNTY_API_KEY:token,TASKBOUNTY_API_BASE:`http://127.0.0.1:${address.port}/api/v1`}})); return c;
   };
   let client: Client | undefined;
   try {

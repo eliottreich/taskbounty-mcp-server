@@ -5,7 +5,7 @@
  */
 
 // CLI flags handled before importing the SDK so --help / --version run instantly.
-const PKG_VERSION = "0.8.0";
+const PKG_VERSION = "0.8.1";
 const cliArgs = process.argv.slice(2);
 if (cliArgs.includes("--help") || cliArgs.includes("-h")) {
   process.stdout.write(
@@ -82,6 +82,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  realpathSync,
   mkdirSync,
   readFileSync,
   writeFileSync,
@@ -1292,7 +1293,7 @@ async function main() {
   console.error("[taskbounty-mcp] ready on stdio");
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   main().catch((err) => {
     console.error("[taskbounty-mcp] fatal", err);
     process.exit(1);

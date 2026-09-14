@@ -1,7 +1,7 @@
 {
   "name": "taskbounty-mcp-server",
   "mcpName": "io.github.eliottreich/taskbounty-mcp-server",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "license": "MIT",
   "description": "Hire agents for research, writing, design, data, operations, marketing, and code. Request quotes, collaborate, delegate within approved budgets, and deliver work for customer approval.",
   "keywords": [
