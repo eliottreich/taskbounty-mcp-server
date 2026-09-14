@@ -5,18 +5,24 @@
  */
 
 // CLI flags handled before importing the SDK so --help / --version run instantly.
-const PKG_VERSION = "0.7.0";
+const PKG_VERSION = "0.8.0";
 const cliArgs = process.argv.slice(2);
 if (cliArgs.includes("--help") || cliArgs.includes("-h")) {
   process.stdout.write(
     [
       "taskbounty-mcp-server " + PKG_VERSION,
       "",
-      "MCP server for TaskBounty. AI agents fix GitHub bugs (with regression tests) and raise test coverage.",
-      "Funded in USD, paid in USDC, ETH, or BTC.",
+      "Hire agents for research, writing, design, data, operations, marketing, and code.",
+      "General work uses customer approval. JS/TS code work supports sandbox verification.",
       "",
       "Install:",
       "  npx -y taskbounty-mcp-server",
+      "",
+      "Marketplace tools:",
+      "  find_agents, request_agent_quote, get_hiring_workspace, quote_agent_work,",
+      "  accept_agent_quote, set_delegation_budget, delegate_agent_task,",
+      "  invite_mission_agent, respond_to_mission_invitation, get_mission, submit_deliverable",
+      "  Quotes and delegation create unfunded work. Funding needs separate approval.",
       "",
       "Creator tools (repo owners):",
       "  taskbounty_login      Browser device login. No API key needed up front.",
@@ -46,7 +52,7 @@ if (cliArgs.includes("--help") || cliArgs.includes("-h")) {
       "    }",
       "",
       "Environment:",
-      "  TASKBOUNTY_API_KEY   Your tb_live_* key from https://www.task-bounty.com/dashboard/api-keys.",
+      "  TASKBOUNTY_API_KEY   Your tb_live_* key from https://www.task-bounty.com/dashboard/settings#api-keys.",
       "                       Optional. If unset, run taskbounty_login for a browser",
       "                       device flow (credentials are stored in ~/.taskbounty/credentials.json).",
       "                       Read-only tools (list/search open bounties) work without a key.",
@@ -63,6 +69,8 @@ if (cliArgs.includes("--version") || cliArgs.includes("-v")) {
   process.stdout.write(PKG_VERSION + "\n");
   process.exit(0);
 }
+
+import { MARKETPLACE_TOOLS, callMarketplaceTool } from "./marketplace.js";
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -182,7 +190,7 @@ async function tbFetch(
       content: [
         {
           type: "text",
-          text: "Not authenticated. Run the taskbounty_login tool to sign in via your browser, or set TASKBOUNTY_API_KEY to your tb_live_* key from https://www.task-bounty.com/dashboard/api-keys.",
+          text: "Not authenticated. Run the taskbounty_login tool to sign in via your browser, or set TASKBOUNTY_API_KEY to your tb_live_* key from https://www.task-bounty.com/dashboard/settings#api-keys.",
         },
       ],
       isError: true,
@@ -383,6 +391,7 @@ async function deviceLogin(clientName: string): Promise<ToolResult> {
 }
 
 const TOOLS = [
+  ...MARKETPLACE_TOOLS,
   {
     name: "taskbounty_login",
     description:
@@ -777,6 +786,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: args = {} } = req.params;
   const a = args as Record<string, unknown>;
+
+  const marketplace = await callMarketplaceTool(name, a, currentToken() || null, (_key, path, init) => tbFetch(path, init));
+  if (marketplace) return marketplace;
 
   switch (name) {
     case "taskbounty_login": {
